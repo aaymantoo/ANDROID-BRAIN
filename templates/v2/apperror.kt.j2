@@ -1,0 +1,14 @@
+package {{ package_name }}.presentation.{{ feature_name }}
+
+sealed class {{ error_class_name }} {
+{% for error in error_types %}{% if error.has_data %}    data class {{ error.name }}({{ error.data }}) : {{ error_class_name }}()
+{% else %}    data object {{ error.name }} : {{ error_class_name }}()
+{% endif %}{% endfor %}    data class Network(val message: String) : {{ error_class_name }}()
+
+    companion object {
+        fun from(throwable: Throwable): {{ error_class_name }} = when (throwable) {
+{% for error in error_types %}{% if error.exception_type %}            is {{ error.exception_type }} -> {{ error.name }}
+{% endif %}{% endfor %}            else -> Network(throwable.message ?: "Unknown error")
+        }
+    }
+}

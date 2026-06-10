@@ -1,0 +1,6 @@
+package {{ package_name }}.presentation.{{ feature_name }}
+
+sealed class {{ event_class_name }} {
+{% for event in events %}{% if event.has_data %}    data class {{ event.name }}({{ event.data }}) : {{ event_class_name }}()
+{% else %}    data object {{ event.name }} : {{ event_class_name }}()
+{% endif %}{% endfor %}}

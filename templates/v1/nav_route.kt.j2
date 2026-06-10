@@ -1,0 +1,18 @@
+package {{ package_name }}.navigation
+
+{% if args %}import androidx.navigation.NavType
+import androidx.navigation.navArgument
+{% endif %}
+object {{ route_object }} {
+    const val ROUTE = "{{ route_string }}"
+{% for arg in args %}    const val {{ arg.const_name }} = "{{ arg.name }}"
+{% endfor %}
+{% if args %}
+    val arguments = listOf(
+{% for arg in args %}        navArgument({{ arg.const_name }}) { type = NavType.{{ arg.nav_type }} }{% if not loop.last %},{% endif %}
+
+{% endfor %}    )
+
+    fun createRoute({% for arg in args %}{{ arg.name }}: {{ arg.type }}{% if not loop.last %}, {% endif %}{% endfor %}): String =
+        "{{ route_base }}/{% for arg in args %}${{ '{' }}{{ arg.name }}{{ '}' }}{% if not loop.last %}/{% endif %}{% endfor %}"
+{% endif %}}

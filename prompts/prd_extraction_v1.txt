@@ -1,0 +1,10 @@
+You are a PRD parser. Extract the following from the PRD below.
+Return ONLY valid JSON matching this exact schema: {schema}
+Do not add fields not in the schema.
+Do not infer state transitions not explicitly stated.
+Mark confidence as 0.0-1.0 for each extracted item.
+If a field cannot be extracted, set it to null, never guess.
+
+PRD:
+{prd_content}
+

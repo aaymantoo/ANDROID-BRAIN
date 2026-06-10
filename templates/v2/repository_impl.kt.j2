@@ -1,0 +1,21 @@
+package {{ package_name }}.data.repository
+
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.tasks.await
+{% for imp in extra_imports %}
+import {{ imp }}
+{% endfor %}
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class {{ impl_name }} @Inject constructor(
+{% for dep in data_sources %}    private val {{ dep.param_name }}: {{ dep.type }},
+{% endfor %}) : {{ interface_name }} {
+
+    // ── Implementations ───────────────────────────────────────────
+{{ implementations }}
+    // ─────────────────────────────────────────────────────────────
+}

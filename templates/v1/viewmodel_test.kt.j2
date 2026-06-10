@@ -1,0 +1,44 @@
+package {{ package_name }}.presentation.{{ feature_name }}
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.mockito.kotlin.mock
+import kotlin.test.assertIs
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class {{ viewmodel_name }}Test {
+
+    private val testDispatcher = StandardTestDispatcher()
+{% for dep in dependencies %}    private val {{ dep.param_name }} = mock<{{ dep.type }}>()
+{% endfor %}
+    private lateinit var viewModel: {{ viewmodel_name }}
+
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(testDispatcher)
+        viewModel = {{ viewmodel_name }}(
+{% for dep in dependencies %}            {{ dep.param_name }} = {{ dep.param_name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}        )
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+{% for fn in functions %}
+    @Test
+    fun `{{ fn.name }} transitions uiState`() = runTest {
+        // TODO: stub dependencies and assert final state
+        advanceUntilIdle()
+        assertIs<{{ ui_state_class }}.Success>(viewModel.uiState.value)
+    }
+{% endfor %}}

@@ -1,0 +1,22 @@
+package {{ package_name }}.di
+
+import dagger.Binds
+import dagger.Module
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+{% for binding in bindings %}
+import {{ package_name }}.domain.repository.{{ binding.interface }}
+import {{ package_name }}.data.repository.{{ binding.implementation }}
+{% endfor %}
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class {{ module_name }} {
+{% for binding in bindings %}
+    @Binds
+    @Singleton
+    abstract fun bind{{ binding.interface }}(
+        impl: {{ binding.implementation }}
+    ): {{ binding.interface }}
+{% endfor %}}

@@ -1,0 +1,40 @@
+package {{ package_name }}.presentation.{{ feature_name }}
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+{% for imp in extra_imports %}
+import {{ imp }}
+{% endfor %}
+
+@Composable
+fun {{ screen_name }}(
+{% for arg in nav_args %}    {{ arg }},
+{% endfor %}{% for cb in nav_callbacks %}    {{ cb }},
+{% endfor %}    viewModel: {{ viewmodel_name }} = hiltViewModel(),
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+{% if event_class %}    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+{% for event in events %}                is {{ event_class }}.{{ event.name }} -> {{ event.handler }}
+{% endfor %}            }
+        }
+    }
+
+{% endif %}    {{ screen_name }}Content(
+        uiState = uiState,
+{% for fn in viewmodel_functions %}        {{ fn.name }} = viewModel::{{ fn.name }},
+{% endfor %}    )
+}
+
+@Composable
+private fun {{ screen_name }}Content(
+    uiState: {{ ui_state_class }},
+{% for fn in viewmodel_functions %}    {{ fn.name }}: ({% for p in fn.params %}{{ p }}{% if not loop.last %}, {% endif %}{% endfor %}) -> Unit,
+{% endfor %}) {
+    // TODO: implement screen content
+}

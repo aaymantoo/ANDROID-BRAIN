@@ -1,0 +1,11 @@
+package {{ package_name }}.domain.repository
+
+import kotlinx.coroutines.flow.Flow
+{% if methods | selectattr('result_wrapped') | list %}import kotlin.Result
+{% endif %}
+
+interface {{ interface_name }} {
+{% for method in methods %}{% if method.is_flow %}    fun {{ method.name }}({% for p in method.params %}{{ p }}{% if not loop.last %}, {% endif %}{% endfor %}): Flow<{{ method.flow_type | default('Any') }}>
+{% elif method.result_wrapped %}    suspend fun {{ method.name }}({% for p in method.params %}{{ p }}{% if not loop.last %}, {% endif %}{% endfor %}): Result<{{ method.result_type | default('Unit') }}>
+{% else %}    suspend fun {{ method.name }}({% for p in method.params %}{{ p }}{% if not loop.last %}, {% endif %}{% endfor %}): {{ method.returns | default('Unit') }}
+{% endif %}{% endfor %}}

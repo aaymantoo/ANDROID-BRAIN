@@ -1,0 +1,69 @@
+package {{ package_name }}.presentation.{{ feature_name }}
+
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+{% for dep in dependencies %}
+import {{ dep.import_path | default(package_name + '.domain.usecase.' + dep.type) }}
+{% endfor %}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class {{ viewmodel_name }}Test {
+
+    private val dispatcher = StandardTestDispatcher()
+{% for dep in dependencies %}
+    private val {{ dep.param_name }}: {{ dep.type }} = mockk(relaxed = true)
+{% endfor %}
+
+    private lateinit var viewModel: {{ viewmodel_name }}
+
+    @Before
+    fun setUp() {
+        viewModel = {{ viewmodel_name }}(
+{% for dep in dependencies %}            {{ dep.param_name }} = {{ dep.param_name }},
+{% endfor %}        )
+    }
+
+    @After
+    fun tearDown() {
+        // dispatcher cleanup if needed
+    }
+
+{% for fn in functions %}
+    @Test
+    fun `{{ fn.name }} updates state correctly`() = runTest(dispatcher) {
+        // Arrange
+        // TODO: configure mocks for {{ fn.name }}
+
+        // Act
+        viewModel.{{ fn.name }}({% for p in fn.params %}{{ p.split(':')[0] | trim }}{% if not loop.last %}, {% endif %}{% endfor %})
+        advanceUntilIdle()
+
+        // Assert
+        val state = viewModel.uiState.value
+        assertFalse("Should not be loading after {{ fn.name }}", state.isLoading)
+        assertNull("Should have no error after successful {{ fn.name }}", state.error)
+    }
+
+{% endfor %}
+    @Test
+    fun `initial state is correct`() = runTest(dispatcher) {
+        val state = viewModel.uiState.value
+        assertFalse(state.isLoading)
+        assertNull(state.error)
+    }
+}

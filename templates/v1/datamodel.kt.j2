@@ -1,0 +1,9 @@
+package {{ package_name }}.data.model
+
+import androidx.annotation.Keep
+
+@Keep
+data class {{ model_name }}(
+{% for field in fields %}    val {{ field.name }}: {{ field.type }}{% if field.nullable %}?{% endif %} = {{ field.default }}{% if not loop.last %},{% endif %}
+
+{% endfor %})

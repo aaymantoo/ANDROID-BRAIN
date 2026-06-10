@@ -1,0 +1,14 @@
+package {{ package_name }}.data.model
+
+import androidx.annotation.Keep
+import com.google.firebase.firestore.PropertyName
+
+@Keep
+data class {{ model_name }}(
+{% for field in fields %}    @get:PropertyName("{{ field.firestore_name | default(field.name) }}")
+    @set:PropertyName("{{ field.firestore_name | default(field.name) }}")
+    val {{ field.name }}: {{ field.type }}{% if field.nullable %}?{% endif %} = {{ field.default }},
+{% endfor %}) {
+    // Required by Firestore deserialisation
+    constructor() : this({% for field in fields %}{% if not loop.first %}, {% endif %}{% if field.nullable %}null{% else %}{{ field.default }}{% endif %}{% endfor %})
+}

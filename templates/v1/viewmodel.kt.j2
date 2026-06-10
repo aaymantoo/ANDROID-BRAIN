@@ -1,0 +1,32 @@
+package {{ package_name }}.presentation.{{ feature_name }}
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+{% for dep in dependencies %}{% if dep.import_path %}
+import {{ dep.import_path }}
+{% endif %}{% endfor %}{% for imp in extra_imports %}
+import {{ imp }}
+{% endfor %}
+import javax.inject.Inject
+
+@HiltViewModel
+class {{ viewmodel_name }} @Inject constructor(
+{% for dep in dependencies %}    private val {{ dep.param_name }}: {{ dep.type }}{% if not loop.last %},{% endif %}
+
+{% endfor %}) : ViewModel() {
+
+    private val _uiState = MutableStateFlow<{{ ui_state_class }}>({{ ui_state_class }}.Loading)
+    val uiState: StateFlow<{{ ui_state_class }}> = _uiState.asStateFlow()
+{% for flow in extra_stateflows %}
+    private val _{{ flow.name }} = MutableStateFlow<{{ flow.type }}?>(null)
+    val {{ flow.name }}: StateFlow<{{ flow.type }}?> = _{{ flow.name }}.asStateFlow()
+{% endfor %}
+    // ── Functions ─────────────────────────────────────────────────
+{{ functions }}
+    // ──────────────────────────────────────────────────────────────
+}

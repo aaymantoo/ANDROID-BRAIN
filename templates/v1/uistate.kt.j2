@@ -1,0 +1,8 @@
+package {{ package_name }}.presentation.{{ feature_name }}
+
+sealed class {{ state_class_name }} {
+    data object Loading : {{ state_class_name }}()
+    data class Success(val data: {{ data_type }}) : {{ state_class_name }}()
+    data class Error(val message: String) : {{ state_class_name }}()
+{% for extra in extra_states %}    {{ extra }}
+{% endfor %}}

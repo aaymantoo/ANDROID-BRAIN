@@ -1,0 +1,40 @@
+package {{ package_name }}.presentation.{{ feature_name }}
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+{% if has_mutex %}import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+{% endif %}{% if has_saved_state %}import androidx.lifecycle.SavedStateHandle
+{% endif %}{% for dep in dependencies %}{% if dep.import_path %}
+import {{ dep.import_path }}
+{% endif %}{% endfor %}{% for imp in extra_imports %}
+import {{ imp }}
+{% endfor %}
+import javax.inject.Inject
+
+@HiltViewModel
+class {{ viewmodel_name }} @Inject constructor(
+{% for dep in dependencies %}    private val {{ dep.param_name }}: {{ dep.type }},
+{% endfor %}{% if has_saved_state %}    private val savedStateHandle: SavedStateHandle,
+{% endif %}) : ViewModel() {
+
+    private val _uiState = MutableStateFlow({{ ui_state_class }}())
+    val uiState: StateFlow<{{ ui_state_class }}> = _uiState.asStateFlow()
+
+{% if event_class %}    private val _events = Channel<{{ event_class }}>(Channel.BUFFERED)
+    val events = _events.receiveAsFlow()
+
+{% endif %}{% if has_mutex %}    private val _mutex = Mutex()
+
+{% endif %}    // ── Functions ─────────────────────────────────────────────────
+{{ functions }}
+    // ──────────────────────────────────────────────────────────────
+}
