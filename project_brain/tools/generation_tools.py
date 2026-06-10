@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from project_brain.brain.schema import ProjectBrain
-from project_brain.generators.code_generation import GenerationOrchestrator, GenerationResult
+from project_brain.generators.code_generation import GenerationOrchestrator, GenerationResult, RepositoryPair
 from project_brain.llm.adapter import LLMAdapter, NullAdapter
 
 
@@ -33,8 +34,12 @@ class GenerationTools:
         return self._write_and_return(result, output_path)
 
     async def generate_repository(self, repository_id: str, output_path: str | None = None) -> dict[str, Any]:
+        if output_path:
+            pair = await self._orchestrator.generate_repository_pair(repository_id)
+            written = self._orchestrator.write_repository_pair(pair, Path(output_path).parent)
+            return written.to_dict()
         result = await self._orchestrator.generate_repository(repository_id)
-        return self._write_and_return(result, output_path)
+        return result.to_dict()
 
     async def generate_datamodel(self, model_id: str, output_path: str | None = None) -> dict[str, Any]:
         result = await self._orchestrator.generate_datamodel(model_id)

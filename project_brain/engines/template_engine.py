@@ -214,9 +214,11 @@ class TemplateEngine:
         else:
             args = _args_from_route(route_str)
         route_object = screen_id.replace("Screen", "Route")
+        route_name = screen_id.replace("Screen", "")
         return {
             "package_name": pkg,
             "route_object": route_object,
+            "route_name": route_name,
             "route_string": route_str,
             "route_base": route_base,
             "args": args,
@@ -431,12 +433,15 @@ class TemplateEngineV2(TemplateEngine):
             _build_result_stub(m)
             for m in repo.methods
         ) or "\n    // TODO: implement methods"
+        # collect all type references for domain import resolution
+        type_refs = [m.returns or "" for m in repo.methods] + [m.result_type or "" for m in repo.methods]
+        domain_imports = _resolve_domain_imports(type_refs, pkg)
         return {
             "package_name": pkg,
             "impl_name": impl_name,
             "interface_name": interface_name,
             "data_sources": data_sources,
-            "extra_imports": _infer_repo_imports(repo, pkg),
+            "extra_imports": _infer_repo_imports(repo, pkg) + domain_imports,
             "implementations": method_stubs,
         }
 
@@ -514,7 +519,48 @@ def _infer_repo_imports(repo: Any, pkg: str) -> list[str]:
         elif "DataStore" in ds.type:
             imports.append("androidx.datastore.core.DataStore")
             imports.append("androidx.datastore.preferences.core.Preferences")
+        elif ds.import_path:
+            imports.append(ds.import_path)
     return imports
+
+
+def _resolve_domain_imports(type_refs: list[str], pkg: str) -> list[str]:
+    """Derive import paths for domain types referenced in method signatures.
+
+    Handles: Result<User?>, Flow<Order?>, AppResult<X>, and bare model names.
+    Unknown types are mapped to {pkg}.domain.model.{TypeName}.
+    """
+    known: dict[str, str] = {
+        "Result": "",  # stdlib, no import
+        "Flow": "kotlinx.coroutines.flow.Flow",
+        "Unit": "",
+        "String": "",
+        "Int": "",
+        "Boolean": "",
+        "Long": "",
+        "Double": "",
+        "Float": "",
+        "Any": "",
+        "List": "",
+        "Map": "",
+    }
+    imports = []
+    all_tokens: set[str] = set()
+    for ref in type_refs:
+        # extract bare type names from generic params: "Result<User?>" → ["Result", "User"]
+        for token in re.findall(r"[A-Z][A-Za-z0-9]+", ref):
+            all_tokens.add(token)
+    for token in all_tokens:
+        if token in known:
+            if known[token]:
+                imports.append(known[token])
+        else:
+            # heuristic: domain models → domain.model, error types → domain.util
+            if token.endswith("Error") or token.endswith("Result") or token == "AppResult":
+                imports.append(f"{pkg}.domain.util.{token}")
+            else:
+                imports.append(f"{pkg}.domain.model.{token}")
+    return sorted(set(imp for imp in imports if imp))
 
 
 def _args_from_route(route: str) -> list[dict]:

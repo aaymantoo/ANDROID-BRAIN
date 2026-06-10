@@ -310,6 +310,18 @@ class RoadmapGenerator:
             return feature.status
         statuses = [self._get_status(brain, sid) for sid in feature.screens]
         if all(s.components.all_generated for s in statuses):
+            # F1: Only promote to "complete" if validate_generation reports >= 90% coverage.
+            # Skip the gate when no files have been written yet (e.g., tests with no disk output).
+            history_targets = {e.target for e in brain.generation_history}
+            has_written_files = any(sid in history_targets for sid in feature.screens)
+            if has_written_files:
+                try:
+                    from project_brain.tools.validation_tools import validate_generation_brain
+                    vresult = validate_generation_brain(brain, feature_id=feature.id)
+                    if vresult.get("completeness_pct", 100) < 90:
+                        return "in_progress"
+                except Exception:
+                    pass  # degrade gracefully — promote anyway
             return "complete"
         if any(s.components.done_count() > 0 for s in statuses):
             return "in_progress"

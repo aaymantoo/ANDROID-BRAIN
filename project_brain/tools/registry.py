@@ -18,9 +18,17 @@ from project_brain.tools.roadmap_tools import (
     get_project_roadmap,
     get_session_context,
 )
+from project_brain.tools.bug_tools import (
+    audit_production_readiness_brain,
+    detect_orphaned_documents_brain,
+    detect_race_conditions_brain,
+    forecast_bugs_brain,
+)
+from project_brain.tools.management_tools import sync_brain_instance
 from project_brain.tools.validation_tools import (
     validate_design_tokens_brain,
     validate_firestore_consistency_brain,
+    validate_generation_brain,
     validate_naming_conventions_brain,
     validate_state_transitions_brain,
 )
@@ -322,6 +330,55 @@ class ToolRegistry:
                 lambda args: self.generation_tools.generate_viewmodel_test(
                     str(args["screen_id"]), args.get("output_path")
                 ),
+            ),
+            # ── Phase 5: Bug Forecasting tools ───────────────────────
+            ToolDefinition(
+                "forecast_bugs",
+                "Run all 5 predictive bug detectors (state transitions, consistency, race conditions, listener leaks, revenue integrity) for a screen.",
+                screen_arg,
+                lambda args: forecast_bugs_brain(self.brain, str(args["screen_id"])),
+            ),
+            ToolDefinition(
+                "detect_race_conditions",
+                "Scan all generated files for Firestore read-then-write patterns without transactions.",
+                no_arg,
+                lambda _: detect_race_conditions_brain(self.brain),
+            ),
+            ToolDefinition(
+                "detect_orphaned_documents",
+                "Detect data_model consistency_link violations that would produce orphaned Firestore documents.",
+                no_arg,
+                lambda _: detect_orphaned_documents_brain(self.brain),
+            ),
+            ToolDefinition(
+                "audit_production_readiness",
+                "Full pre-launch bug audit for all screens in a phase. Returns prioritised CLASS_A/B bug list.",
+                phase_arg,
+                lambda args: audit_production_readiness_brain(self.brain, int(args["phase"])),
+            ),
+            # ── Phase 5/6: validate_generation & sync_brain ──────────
+            ToolDefinition(
+                "validate_generation",
+                "Compare generated files against Brain spec + ROADMAP.md + source PRD. Returns per-screen completeness % with brain_match / roadmap_match / prd_match verdict columns.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "feature_id": {"type": "string"},
+                        "phase": {"type": "integer"},
+                    },
+                    "additionalProperties": False,
+                },
+                lambda args: validate_generation_brain(
+                    self.brain,
+                    feature_id=args.get("feature_id"),
+                    phase=args.get("phase"),
+                ),
+            ),
+            ToolDefinition(
+                "sync_brain",
+                "Re-scan all previously generated files for drift from the brain spec. Adds drift items to brain.known_violations.",
+                no_arg,
+                lambda _: sync_brain_instance(self.brain).to_dict(),
             ),
             # ── Phase 0C: Roadmap & Pipeline tools ───────────────────
             ToolDefinition(

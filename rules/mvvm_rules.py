@@ -122,8 +122,13 @@ MVVM_RULES: list[MVVMRule] = [
         description="UI state sealed class should include Loading state",
         severity="CLASS_B",
         file_types=("Any",),
-        check=lambda analysis: "UiState" not in analysis.content or "Loading" in analysis.content,
-        fix="Add a Loading state to the UI state model.",
+        # v2 enriched brains use data-class UiState with isLoading: Boolean — skip for those
+        check=lambda analysis: (
+            "UiState" not in analysis.content
+            or "Loading" in analysis.content
+            or (bool(re.search(r"@Immutable", analysis.content)) and bool(re.search(r"data class \w+UiState", analysis.content)))
+        ),
+        fix="Add a Loading state to the UI state model (or use isLoading: Boolean field for data-class UiState).",
         line_finder=line(r"UiState"),
     ),
     MVVMRule(

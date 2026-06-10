@@ -1,0 +1,46 @@
+package {{ package_name }}.navigation
+
+{% if args %}import androidx.navigation.NavType
+import androidx.navigation.navArgument
+{% endif %}import androidx.navigation.NavController
+import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NavOptions
+import androidx.navigation.compose.composable
+
+object {{ route_object }} {
+    const val ROUTE = "{{ route_string }}"
+{% for arg in args %}    const val {{ arg.const_name }} = "{{ arg.name }}"
+{% endfor %}
+{% if args %}
+    val arguments = listOf(
+{% for arg in args %}        navArgument({{ arg.const_name }}) { type = NavType.{{ arg.nav_type }} }{% if not loop.last %},{% endif %}
+
+{% endfor %}    )
+
+    fun createRoute({% for arg in args %}{{ arg.name }}: {{ arg.type }}{% if not loop.last %}, {% endif %}{% endfor %}): String =
+        "{{ route_base }}/{% for arg in args %}${{ '{' }}{{ arg.name }}{{ '}' }}{% if not loop.last %}/{% endif %}{% endfor %}"
+{% endif %}}
+
+fun NavController.navigateTo{{ route_name }}(
+{% for arg in args %}    {{ arg.name }}: {{ arg.type }},
+{% endfor %}    navOptions: NavOptions? = null,
+) {
+    navigate(
+        {{ route_object }}{% if args %}.createRoute({% for arg in args %}{{ arg.name }}{% if not loop.last %}, {% endif %}{% endfor %}){% else %}.ROUTE{% endif %},
+        navOptions,
+    )
+}
+
+fun NavGraphBuilder.{{ route_name | lower }}Screen(
+    onNavigateBack: () -> Unit,
+{% if args %}    content: @androidx.compose.runtime.Composable ({% for arg in args %}{{ arg.name }}: {{ arg.type }}{% if not loop.last %}, {% endif %}{% endfor %}) -> Unit,
+{% else %}    content: @androidx.compose.runtime.Composable () -> Unit,
+{% endif %}) {
+    composable(
+        route = {{ route_object }}.ROUTE,
+{% if args %}        arguments = {{ route_object }}.arguments,
+{% endif %}    ) { backStackEntry ->
+{% for arg in args %}        val {{ arg.name }} = backStackEntry.arguments?.getString({{ route_object }}.{{ arg.const_name }}) ?: ""
+{% endfor %}        content({% for arg in args %}{{ arg.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+    }
+}

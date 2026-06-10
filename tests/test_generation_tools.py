@@ -89,9 +89,11 @@ class RegistryPhase4Test(unittest.IsolatedAsyncioTestCase):
         self.brain = PRDParser().parse_file(Path("tests/fixtures/sample_prd.md"))
         self.registry = create_registry(self.brain, llm=NullAdapter())
 
-    def test_registry_exposes_29_tools(self) -> None:
+    def test_registry_exposes_all_tools(self) -> None:
         names = [tool.name for tool in self.registry.list_definitions()]
-        self.assertEqual(len(names), 29)
+        # 29 original + 6 new (forecast_bugs, detect_race_conditions, detect_orphaned_documents,
+        # audit_production_readiness, validate_generation, sync_brain)
+        self.assertEqual(len(names), 35)
 
     def test_all_generation_tools_registered(self) -> None:
         names = {tool.name for tool in self.registry.list_definitions()}

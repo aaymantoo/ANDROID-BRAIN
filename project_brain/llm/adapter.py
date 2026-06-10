@@ -24,6 +24,7 @@ class FillFunctionsSpec:
     dependencies: list[str] = field(default_factory=list)
     business_rules: list[str] = field(default_factory=list)
     violations_to_avoid: list[str] = field(default_factory=list)
+    ui_state_type: str = "sealed_class"  # "sealed_class" | "data_class"
 
 
 class LLMAdapter(Protocol):

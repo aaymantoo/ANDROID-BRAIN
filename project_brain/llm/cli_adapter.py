@@ -23,8 +23,10 @@ from pathlib import Path
 from project_brain.llm.adapter import FillFunctionsSpec
 
 
-_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "function_fill_v1.txt"
+_PROMPT_PATH_V1 = Path(__file__).parent.parent.parent / "prompts" / "function_fill_v1.txt"
+_PROMPT_PATH_V2 = Path(__file__).parent.parent.parent / "prompts" / "function_fill_v2.txt"
 _CLI_TIMEOUT = 180  # seconds — CLI calls are slower than direct API
+_DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.75  # skip LLM when deterministic confidence >= this
 
 
 class CLIAdapter(ABC):
@@ -63,7 +65,14 @@ class CLIAdapter(ABC):
         return stdout.decode("utf-8", errors="replace").strip()
 
     async def fill_functions(self, spec: FillFunctionsSpec) -> str:
-        prompt_template = _PROMPT_PATH.read_text(encoding="utf-8")
+        # Try deterministic generation first — saves LLM call for 80-90% of cases
+        from project_brain.generators.deterministic_body_filler import DeterministicFunctionBodyGenerator
+        det_result, confidence = DeterministicFunctionBodyGenerator().fill(spec)
+        if confidence >= _DETERMINISTIC_CONFIDENCE_THRESHOLD:
+            return det_result
+
+        prompt_path = _PROMPT_PATH_V2 if spec.ui_state_type == "data_class" else _PROMPT_PATH_V1
+        prompt_template = prompt_path.read_text(encoding="utf-8")
         functions_spec = "\n\n".join(
             f"fun {fn.name}({', '.join(fn.params)}): {fn.returns}"
             + (f"\n// Business rule: {fn.business_rule}" if fn.business_rule else "")

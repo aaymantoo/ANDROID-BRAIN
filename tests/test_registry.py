@@ -12,7 +12,8 @@ class RegistryTest(unittest.IsolatedAsyncioTestCase):
 
         names = [tool.name for tool in registry.list_definitions()]
 
-        self.assertEqual(len(names), 29)
+        # 29 original + 6 new Phase 5/6 tools
+        self.assertEqual(len(names), 35)
         self.assertIn("get_project_context", names)
         self.assertIn("get_navigation_graph", names)
         self.assertIn("validate_mvvm", names)
