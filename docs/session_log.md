@@ -73,6 +73,25 @@
 - Updated `CLAUDE.md` with Phase 0B commands, LLM adapter table, and expanded modules table.
 - Final test count: **86 tests passing**.
 
+## 2026-06-10 (Phases 5 & 6 + Phase 4 Gap-Fill + validate_generation)
+
+- Audited Phase 4 generation quality (audit-phase-4.md); identified 5 gaps scoring 7.5/10.
+- Implemented `DeterministicFunctionBodyGenerator` (`project_brain/generators/deterministic_body_filler.py`): fills 80–90 % of ViewModel function bodies from `state_updates`/`events_fired`/`concurrent` brain fields with zero LLM; integrated as pre-pass in `cli_adapter.py` `fill_functions()`.
+- Added repository two-file split: `RepositoryPair`, `generate_repository_pair()`, `write_repository_pair()` in `code_generation.py`.
+- Created `templates/v2/nav_route.kt.j2`: enterprise nav route with `NavController.navigateTo{Screen}()` extension + `NavGraphBuilder.{screen}Screen()` composable builder.
+- Added `_resolve_domain_imports()` to `template_engine.py`: maps `AppResult`/`User` return types to `domain.util`/`domain.model` import paths.
+- Fixed B004 false positive in `rules/mvvm_rules.py`: skip loading-state check for `@Immutable data class \w+UiState`.
+- Added `CompileVerifier` to `code_generation.py`: optional `kotlinc` smoke-check gate after every `write_result()`.
+- Added `spec_coverage` (fraction of non-TODO function bodies) and `bug_warnings` (CLASS_A forecasts) fields to `GenerationResult`.
+- Implemented Phase 5 `BugEngine` (`project_brain/engines/bug_engine.py`): 5 zero-LLM detectors (StateTransition, FirestoreConsistency, RaceCondition, ListenerLeak, RevenueIntegrity). MCP facades in `bug_tools.py`.
+- Implemented Phase 6 `StateTransitionEngine` (`project_brain/engines/state_engine.py`): validates required_firestore_updates against file content.
+- Implemented `sync_brain` (`project_brain/tools/management_tools.py`): scans generation_history for drift, adds NEEDS_REVIEW violations.
+- Added `validate_generation` to `validation_tools.py`: three-column per-screen verdict (brain_match / roadmap_match / prd_match) with completeness_pct.
+- Phase F integration wiring: F1 — feature promotion gated on completeness_pct ≥ 90; F2 — BugEngine.forecast() runs non-blocking in write_result(); F3 — spec_coverage computed in write_result().
+- Registry: 29 → 35 tools.
+- Added `tests/test_new_phases.py` (17 passing tests + 3 skipped for missing fixtures).
+- Final test count: **150 tests passing**.
+
 ## 2026-06-10 (Phase 0C — Roadmap & Feature Pipeline)
 
 - Implemented Phase 0C: persistent `ROADMAP.md` and session-continuity MCP tools.

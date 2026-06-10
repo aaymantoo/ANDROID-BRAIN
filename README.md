@@ -20,7 +20,7 @@ Hyperspec PRD (production-ready)
 PROJECT_BRAIN.json                ← single source of truth
      │
      ▼  brain serve               ← stdio MCP server
-Claude Code / Gemini CLI          ← queries + generates enterprise Kotlin
+Claude Code / Gemini CLI          ← queries, generates, validates, and forecasts bugs
 ```
 
 ---
@@ -90,7 +90,7 @@ Inside a Claude Code session:
 /mcp
 ```
 
-You should see `brain-engine` listed with all 25 tools available.
+You should see `brain-engine` listed with all 35 tools available.
 
 ### Step 3 — Generate your brain
 
@@ -116,13 +116,19 @@ Generate the AuthViewModel for the login screen
 
 Validate my HomeViewModel against MVVM rules
 → uses validate_mvvm
+
+Check for race conditions in the generated repository
+→ uses detect_race_conditions
+
+Is the auth feature complete per the PRD?
+→ uses validate_generation
 ```
 
 ---
 
 ## Setup with Gemini CLI
 
-Gemini CLI (also called "Google's AI CLI" or colloquially "Antigravity") supports MCP servers through its `settings.json` configuration.
+Gemini CLI supports MCP servers through its `settings.json` configuration.
 
 ### Step 1 — Install Gemini CLI
 
@@ -164,8 +170,6 @@ gemini
 > Generate the repository for the auth feature
 ```
 
-Gemini CLI will call Brain Engine's MCP tools automatically.
-
 ---
 
 ## Setup with Ollama (fully offline)
@@ -198,7 +202,7 @@ brain enrich-prd ./rough_notes.md --output ./enriched_prd.md
 ```
 
 The LLM (using whatever tool is installed) will:
-- Fill every ViewModel function signature
+- Fill every ViewModel function signature with `state_updates`, `events_fired`, and `concurrent` fields
 - Add typed state fields and event specs
 - Infer repository method signatures with `Result<T>` wrapping
 - Apply 20 enterprise Android patterns (Channel events, Mutex guards, `@Keep`, `@Immutable`, etc.)
@@ -236,21 +240,28 @@ From your LLM tool session:
 
 ```
 generate_viewmodel("login")
-generate_repository("auth")
+generate_repository("auth")       # writes AuthRepository.kt + AuthRepositoryImpl.kt
 generate_screen_scaffold("login")
 generate_di_module("auth")
 generate_viewmodel_test("login")
 ```
 
-Generated files are written to your project directory, validated against MVVM rules, and backed up before overwriting.
+Generated files are:
+- Validated against MVVM rules and auto-fixed
+- Smoke-checked by `kotlinc` if installed
+- Backed up before overwriting
+- Logged to `generation_history` in the brain
 
-### 6. Validate written code
+Each result includes `spec_coverage` (fraction of non-TODO function bodies) and `bug_warnings` (CLASS_A forecasts).
+
+### 6. Validate and check for bugs
 
 ```bash
 # From your LLM session, or directly:
-brain serve   # then call:
-validate_mvvm("app/src/main/kotlin/ui/login/LoginViewModel.kt")
-validate_naming_conventions("app/src/main/kotlin/...")
+validate_generation(feature_id="auth")     # brain + roadmap + PRD check
+forecast_bugs("LoginScreen")               # 5-detector bug forecast
+audit_production_readiness(1)              # full phase pre-launch report
+sync_brain                                 # detect drift from brain spec
 ```
 
 ---
@@ -272,7 +283,7 @@ validate_naming_conventions("app/src/main/kotlin/...")
 
 ---
 
-## MCP Tool Catalogue (29 tools)
+## MCP Tool Catalogue (35 tools)
 
 ### Roadmap & pipeline tools — zero-LLM, call at session start
 
@@ -308,24 +319,38 @@ validate_naming_conventions("app/src/main/kotlin/...")
 | `validate_state_transitions(entity, file_path)` | Required state update presence |
 | `validate_design_tokens(file_path)` | Disallowed token usage |
 | `validate_naming_conventions(file_path)` | Kotlin naming convention violations |
+| `validate_generation(feature_id?, phase?)` | Three-column per-screen verdict: `brain_match` / `roadmap_match` / `prd_match` with `completeness_pct` |
 
-### Generation tools — LLM-assisted, fall back to `// TODO` stubs
+### Generation tools — LLM-assisted, deterministic pre-pass covers ~80 % of bodies
 
-All generation tools: validate output with the rule engine → auto-fix CLASS_A violations → retry up to 3 times → write with `.brain_backup_*` and log to `generation_history`.
+All generation tools: validate output → auto-fix CLASS_A violations → retry (×3) → write with `.brain_backup_*` → compile-check → bug forecast → log to `generation_history`.
 
 | Tool | What it generates |
 |---|---|
-| `generate_viewmodel(screen_id)` | `@HiltViewModel` + `StateFlow` + `Channel<Event>` |
-| `generate_ui_state(screen_id)` | `@Immutable data class` UiState with typed fields |
-| `generate_repository(repository_id)` | Interface + `@Singleton` implementation pair |
+| `generate_viewmodel(screen_id)` | `@HiltViewModel` + `StateFlow` + `Channel<Event>`; deterministic filler fills 80–90 % of function bodies without LLM |
+| `generate_ui_state(screen_id)` | `@Immutable data class` UiState (v2) or sealed class (v1) |
+| `generate_repository(repository_id)` | Interface `.kt` + `Impl.kt` as two separate files |
 | `generate_datamodel(model_id)` | `@Keep` data class with `@PropertyName` for Firestore |
-| `generate_screen_scaffold(screen_id)` | `@Composable` + `collectAsStateWithLifecycle` + Content split |
+| `generate_screen_scaffold(screen_id)` | `@Composable` + `collectAsStateWithLifecycle` + Content composable split |
 | `generate_usecase(usecase_name)` | Single-function `UseCase` with `invoke()` |
 | `generate_di_module(feature_name)` | Hilt `@Module @Binds` for feature repositories |
-| `generate_nav_route(screen_id)` | Type-safe route object with path args |
+| `generate_nav_route(screen_id)` | v2: route object + `NavController.navigateTo{Screen}()` extension + `NavGraphBuilder.{screen}Screen()` composable builder |
 | `generate_viewmodel_test(screen_id)` | mockk + `StandardTestDispatcher` + `runTest` scaffold |
 
-v2 enterprise templates (data-class UiState, Channel events, `Result<T>` repos) are selected automatically when the brain was produced by `brain enrich-prd`. Legacy v1 templates are used otherwise.
+### Bug forecasting tools — zero-LLM, Phase 5
+
+| Tool | What it detects |
+|---|---|
+| `forecast_bugs(screen_id)` | All 5 detectors for one screen; returns prioritised CLASS_A/B list |
+| `detect_race_conditions()` | Read-then-write Firestore patterns without transactions across all generated files |
+| `detect_orphaned_documents()` | `consistency_link` violations that produce orphaned Firestore documents |
+| `audit_production_readiness(phase)` | Full pre-launch bug audit for a phase |
+
+### Sync tool — zero-LLM, Phase 6
+
+| Tool | What it does |
+|---|---|
+| `sync_brain` | Re-scans all previously generated files; adds drift items to `brain.known_violations` |
 
 ---
 
@@ -355,10 +380,12 @@ Copy `.env.example` → `.env` to set these permanently.
 ## Running Tests
 
 ```bash
-pytest              # 86 tests
-pytest tests/test_cli_adapter.py -v   # CLI adapter detection
-pytest tests/test_prd_enricher.py -v  # enrichment engine
-pytest tests/test_schema.py -v        # Pydantic schema
+pytest              # 150 tests
+pytest tests/test_new_phases.py -v     # Phase 4–6 coverage (20 tests)
+pytest tests/test_cli_adapter.py -v    # CLI adapter detection
+pytest tests/test_prd_enricher.py -v   # enrichment engine
+pytest tests/test_schema.py -v         # Pydantic schema
+pytest tests/test_generation_tools.py -v  # Phase 4 generation + registry
 ```
 
 ---
@@ -373,6 +400,6 @@ pytest tests/test_schema.py -v        # Pydantic schema
 | 1 | Brain schema, PRD scorer/parser, codebase scanner | Complete |
 | 2 | MCP server, 10 read tools | Complete |
 | 3 | Rule engine, 6 validation tools | Complete |
-| 4 | Code generation, self-healing orchestrator, 9 generation tools | Complete |
-| 5 | Predictive bug engine | Not started |
-| 6 | Self-healing sync (`brain sync`) | Not started |
+| 4 | Code generation: v1+v2 templates, DeterministicFunctionBodyGenerator, self-healing orchestrator, CompileVerifier, 9 generation tools | **Complete** |
+| 5 | Predictive bug engine: 5 zero-LLM detectors, 4 MCP tools | **Complete** |
+| 6 | Self-healing sync: StateTransitionEngine, sync_brain MCP tool | **Complete** |
