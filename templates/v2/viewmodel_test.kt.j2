@@ -1,14 +1,17 @@
 package {{ package_name }}.presentation.{{ feature_name }}
 
-import io.mockk.coEvery
+{% if has_saved_state %}import androidx.lifecycle.SavedStateHandle
+{% endif %}import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -33,14 +36,16 @@ class {{ viewmodel_name }}Test {
 
     @Before
     fun setUp() {
+        Dispatchers.setMain(dispatcher)
         viewModel = {{ viewmodel_name }}(
 {% for dep in dependencies %}            {{ dep.param_name }} = {{ dep.param_name }},
-{% endfor %}        )
+{% endfor %}{% if has_saved_state %}            savedStateHandle = SavedStateHandle(mapOf({{ saved_state_initial }})),
+{% endif %}        )
     }
 
     @After
     fun tearDown() {
-        // dispatcher cleanup if needed
+        Dispatchers.resetMain()
     }
 
 {% for fn in functions %}
@@ -55,15 +60,15 @@ class {{ viewmodel_name }}Test {
 
         // Assert
         val state = viewModel.uiState.value
-        assertFalse("Should not be loading after {{ fn.name }}", state.isLoading)
-        assertNull("Should have no error after successful {{ fn.name }}", state.error)
+        assertFalse("Should not be loading after {{ fn.name }}", state.{{ loading_field }})
+        assertNull("Should have no error after successful {{ fn.name }}", state.{{ error_field }})
     }
 
 {% endfor %}
     @Test
     fun `initial state is correct`() = runTest(dispatcher) {
         val state = viewModel.uiState.value
-        assertFalse(state.isLoading)
-        assertNull(state.error)
+        assertFalse(state.{{ loading_field }})
+        assertNull(state.{{ error_field }})
     }
 }

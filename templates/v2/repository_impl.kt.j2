@@ -14,7 +14,11 @@ import javax.inject.Singleton
 class {{ impl_name }} @Inject constructor(
 {% for dep in data_sources %}    private val {{ dep.param_name }}: {{ dep.type }},
 {% endfor %}) : {{ interface_name }} {
-
+{% if private_fields %}
+    // ── Private state ─────────────────────────────────────────────
+{% for f in private_fields %}    {% if f.volatile %}@Volatile {% endif %}private var {{ f.name }}: {{ f.type }} = {{ f.default }}
+{% endfor %}
+{% endif %}
     // ── Implementations ───────────────────────────────────────────
 {{ implementations }}
     // ─────────────────────────────────────────────────────────────

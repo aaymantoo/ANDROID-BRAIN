@@ -34,7 +34,24 @@ class {{ viewmodel_name }} @Inject constructor(
 
 {% endif %}{% if has_mutex %}    private val _mutex = Mutex()
 
+{% endif %}{% if private_fields %}    // ── Private state ─────────────────────────────────────────────
+{% for f in private_fields %}    {% if f.volatile %}@Volatile {% endif %}private var {{ f.name }}: {{ f.type }} = {{ f.default }}
+{% endfor %}
+{% endif %}{% if init_lines %}    init {
+{% for line in init_lines %}        {{ line }}
+{% endfor %}    }
+
 {% endif %}    // ── Functions ─────────────────────────────────────────────────
 {{ functions }}
     // ──────────────────────────────────────────────────────────────
-}
+{% if computed_properties %}
+    // ── Computed ──────────────────────────────────────────────────
+{% for prop in computed_properties %}    private val {{ prop.name }}: {{ prop.type }} get() = {{ prop.expression }}
+{% endfor %}{% endif %}{% if private_functions %}
+    // ── Private helpers ───────────────────────────────────────────
+{% for fn in private_functions %}
+    private fun {{ fn.name }}{{ fn.signature }}: {{ fn.return_type }} {
+        // {{ fn.body_hint }}
+        // TODO: implement
+    }
+{% endfor %}{% endif %}}

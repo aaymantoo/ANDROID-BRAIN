@@ -13,6 +13,7 @@ from project_brain.brain.schema import (
     ProjectBrain,
     Repository,
     Screen,
+    StateField,
     ViewModel,
 )
 
@@ -236,6 +237,15 @@ class TemplateEngine:
 
     def viewmodel_test_context(self, brain: ProjectBrain, screen_id: str) -> dict[str, Any]:
         ctx = self.viewmodel_context(brain, screen_id)
+        screen = _require_screen(brain, screen_id)
+        viewmodel = _find_viewmodel(brain, screen.viewmodel)
+        state_fields = viewmodel.state_fields if viewmodel else []
+        has_saved_state = viewmodel.has_saved_state if viewmodel else False
+        # Derive test-friendly field names from the actual state_fields
+        loading_field = _find_loading_state_field(state_fields)
+        error_field = _find_error_state_field(state_fields)
+        # Build SavedStateHandle initial map from the screen's nav_args
+        saved_state_initial = _build_saved_state_initial(screen.nav_args or [])
         return {
             "package_name": ctx["package_name"],
             "feature_name": ctx["feature_name"],
@@ -243,6 +253,11 @@ class TemplateEngine:
             "ui_state_class": ctx["ui_state_class"],
             "dependencies": ctx["dependencies"],
             "functions": ctx["_functions_spec"],
+            # v3
+            "has_saved_state": has_saved_state,
+            "loading_field": loading_field,
+            "error_field": error_field,
+            "saved_state_initial": saved_state_initial,
         }
 
 
@@ -387,6 +402,20 @@ class TemplateEngineV2(TemplateEngine):
         has_mutex = viewmodel.has_mutex if viewmodel else any(f.concurrent for f in functions_spec)
         event_class = (viewmodel.event_class if viewmodel else None) or f"{screen_id.replace('Screen', '')}Event"
         has_events = bool(viewmodel.events if viewmodel else False)
+        # v3: private fields, init block, private helpers, computed properties
+        private_fields = [
+            {"name": f.name, "type": f.type, "default": f.default, "volatile": f.volatile}
+            for f in (viewmodel.private_fields if viewmodel else [])
+        ]
+        init_lines = list(viewmodel.init_lines) if viewmodel else []
+        private_functions = [
+            {"name": f.name, "signature": f.signature, "return_type": f.return_type, "body_hint": f.body_hint}
+            for f in (viewmodel.private_functions if viewmodel else [])
+        ]
+        computed_properties = [
+            {"name": p.name, "type": p.type, "expression": p.expression}
+            for p in (viewmodel.computed_properties if viewmodel else [])
+        ]
         return {
             "package_name": pkg,
             "feature_name": feature,
@@ -400,6 +429,11 @@ class TemplateEngineV2(TemplateEngine):
             "functions": "    // TODO: implement",
             "_functions_spec": functions_spec,
             "_ui_state_class": ui_state,
+            # v3
+            "private_fields": private_fields,
+            "init_lines": init_lines,
+            "private_functions": private_functions,
+            "computed_properties": computed_properties,
         }
 
     def uistate_context(self, brain: ProjectBrain, screen_id: str) -> dict[str, Any]:
@@ -466,12 +500,16 @@ class TemplateEngineV2(TemplateEngine):
         # collect all type references for domain import resolution
         type_refs = [m.returns or "" for m in repo.methods] + [m.result_type or "" for m in repo.methods]
         domain_imports = _resolve_domain_imports(type_refs, pkg)
+        # v3: infer private fields from firebase_patterns across methods
+        private_fields = _infer_repo_private_fields(repo.methods)
+        extra_imports = _infer_repo_imports(repo, pkg) + domain_imports + _infer_firebase_pattern_imports(repo.methods)
         return {
             "package_name": pkg,
             "impl_name": impl_name,
             "interface_name": interface_name,
             "data_sources": data_sources,
-            "extra_imports": _infer_repo_imports(repo, pkg) + domain_imports,
+            "extra_imports": sorted(set(extra_imports)),
+            "private_fields": private_fields,
             "implementations": method_stubs,
             "_functions_spec": repo.methods,
             "_ui_state_class": impl_name,
@@ -511,6 +549,7 @@ class TemplateEngineV2(TemplateEngine):
             else:
                 nav_callbacks.append(f"on{e.name}: () -> Unit")
         functions = viewmodel.functions if viewmodel else []
+        ui_content = _render_ui_components(screen.ui_components or [])
         return {
             "package_name": pkg,
             "feature_name": feature,
@@ -522,12 +561,102 @@ class TemplateEngineV2(TemplateEngine):
             "nav_callbacks": nav_callbacks,
             "nav_args": screen.nav_args or [],
             "viewmodel_functions": [{"name": f.name, "params": f.params} for f in functions],
-            "extra_imports": [],
+            "extra_imports": _screen_component_imports(screen.ui_components or []),
+            "ui_content": ui_content,
         }
+
+
+_FIREBASE_STUBS: dict[str, str] = {
+    "auth_state_listener": (
+        "\n    override fun {{name}}({{params}}): Flow<{{ret}}> = callbackFlow {{\n"
+        "        val listener = firebaseAuth.addAuthStateListener {{ auth ->\n"
+        "            trySend(AppResult.Success(null)) // TODO: map auth.currentUser to domain User\n"
+        "        }}\n"
+        "        firebaseAuth.addAuthStateListener(listener)\n"
+        "        awaitClose {{ firebaseAuth.removeAuthStateListener(listener) }}\n"
+        "    }}"
+    ),
+    "phone_auth": (
+        "\n    override suspend fun {{name}}({{params}}): {{ret}} = runCatching {{\n"
+        "        suspendCancellableCoroutine {{ cont ->\n"
+        "            val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {{\n"
+        "                override fun onVerificationCompleted(c: PhoneAuthCredential) {{ cont.resume(Unit) }}\n"
+        "                override fun onVerificationFailed(e: FirebaseException) {{ cont.resumeWithException(e) }}\n"
+        "                override fun onCodeSent(id: String, t: PhoneAuthProvider.ForceResendingToken) {{\n"
+        "                    savedVerificationId = id; cont.resume(Unit)\n"
+        "                }}\n"
+        "            }}\n"
+        "            PhoneAuthProvider.verifyPhoneNumber(\n"
+        "                PhoneAuthOptions.newBuilder(firebaseAuth)\n"
+        "                    .setPhoneNumber(phoneNumber)\n"
+        "                    .setTimeout(60L, java.util.concurrent.TimeUnit.SECONDS)\n"
+        "                    .setCallbacks(callbacks).build()\n"
+        "            )\n"
+        "        }}\n"
+        "    }}"
+    ),
+    "credential_sign_in": (
+        "\n    override suspend fun {{name}}({{params}}): {{ret}} = runCatching {{\n"
+        "        val credential = PhoneAuthProvider.getCredential(savedVerificationId, otp)\n"
+        "        val result = firebaseAuth.signInWithCredential(credential).await()\n"
+        "        val uid = result.user?.uid ?: throw IllegalStateException(\"Sign-in returned no user\")\n"
+        "        val doc = firestore.collection(\"users\").document(uid).get().await()\n"
+        "        // TODO: map doc snapshot to domain model\n"
+        "        TODO(\"map Firestore doc to return type\")\n"
+        "    }}"
+    ),
+    "firestore_get": (
+        "\n    override suspend fun {{name}}({{params}}): {{ret}} = runCatching {{\n"
+        "        val uid = firebaseAuth.currentUser?.uid ?: throw IllegalStateException(\"Not authenticated\")\n"
+        "        val doc = firestore.collection(\"{collection}\").document(uid).get().await()\n"
+        "        // TODO: map doc snapshot to domain model\n"
+        "        TODO(\"map Firestore doc to return type\")\n"
+        "    }}"
+    ),
+    "firestore_update": (
+        "\n    override suspend fun {{name}}({{params}}): {{ret}} = runCatching {{\n"
+        "        val uid = firebaseAuth.currentUser?.uid ?: throw IllegalStateException(\"Not authenticated\")\n"
+        "        val updates = mapOf<String, Any>( /* TODO: populate fields */ )\n"
+        "        firestore.collection(\"{collection}\").document(uid).update(updates).await()\n"
+        "    }}"
+    ),
+}
+
+_FIREBASE_PATTERN_IMPORTS: dict[str, list[str]] = {
+    "phone_auth": [
+        "com.google.firebase.auth.PhoneAuthCredential",
+        "com.google.firebase.auth.PhoneAuthOptions",
+        "com.google.firebase.auth.PhoneAuthProvider",
+        "com.google.firebase.FirebaseException",
+        "kotlin.coroutines.resume",
+        "kotlin.coroutines.resumeWithException",
+        "kotlinx.coroutines.suspendCancellableCoroutine",
+    ],
+    "credential_sign_in": [
+        "com.google.firebase.auth.PhoneAuthProvider",
+    ],
+    "auth_state_listener": [],
+    "firestore_get": [],
+    "firestore_update": [],
+}
 
 
 def _build_result_stub(m: Any) -> str:
     params = ", ".join(m.params)
+    pattern = getattr(m, "firebase_pattern", None)
+    if pattern and pattern in _FIREBASE_STUBS:
+        if m.is_flow:
+            ret = f"Flow<{m.flow_type or 'Any'}>"
+        elif m.result_wrapped:
+            ret = f"Result<{m.result_type or 'Unit'}>"
+        else:
+            ret = m.returns or "Unit"
+        collection = (m.firestore_path or "collection_name").strip("/").split("/")[0]
+        stub = _FIREBASE_STUBS[pattern]
+        stub = stub.replace("{name}", m.name).replace("{params}", params).replace("{ret}", ret)
+        stub = stub.replace("{collection}", collection)
+        # unescape the double-brace escaping used in the dict literals
+        return stub.replace("{{", "{").replace("}}", "}")
     if m.is_flow:
         return f"\n    override fun {m.name}({params}): Flow<{m.flow_type or 'Any'}> {{\n        // TODO: implement\n        return kotlinx.coroutines.flow.emptyFlow()\n    }}"
     elif m.result_wrapped:
@@ -603,3 +732,282 @@ def _args_from_route(route: str) -> list[dict]:
         const_name = re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper()
         result.append({"name": name, "type": "String", "nav_type": "StringType", "const_name": const_name})
     return result
+
+
+# ── v3 helpers ───────────────────────────────────────────────────────────────
+
+_LOADING_KEYWORDS = frozenset({"loading", "sending", "verifying", "resending", "fetching", "submitting", "saving"})
+_ERROR_KEYWORDS = frozenset({"error", "message", "msg", "failure"})
+
+
+def _find_loading_state_field(state_fields: list[StateField]) -> str:
+    """Return the name of the first boolean loading field, or 'isLoading' as fallback."""
+    for f in state_fields:
+        if f.type == "Boolean" and any(kw in f.name.lower() for kw in _LOADING_KEYWORDS):
+            return f.name
+    for f in state_fields:
+        if f.type == "Boolean":
+            return f.name
+    return "isLoading"
+
+
+def _find_error_state_field(state_fields: list[StateField]) -> str:
+    """Return the name of the first nullable String error field, or 'errorMessage' as fallback."""
+    for f in state_fields:
+        if f.nullable and f.type in {"String", "String?"}:
+            if any(kw in f.name.lower() for kw in _ERROR_KEYWORDS):
+                return f.name
+    for f in state_fields:
+        if f.nullable:
+            return f.name
+    return "errorMessage"
+
+
+def _build_saved_state_initial(nav_args: list[str]) -> str:
+    """Build the mapOf(...) contents for SavedStateHandle in tests, e.g. '"phone" to ""'."""
+    pairs = []
+    for arg in nav_args:
+        parts = arg.split(":")
+        if len(parts) != 2:
+            continue
+        name = parts[0].strip()
+        type_ = parts[1].strip().rstrip("?")
+        default = _DEFAULT_VALUE_MAP.get(type_, '""')
+        pairs.append(f'"{name}" to {default}')
+    return ", ".join(pairs) if pairs else '"key" to ""'
+
+
+def _infer_repo_private_fields(methods: list[Any]) -> list[dict]:
+    """Infer ViewModel/Repository private fields needed by firebase_pattern methods."""
+    fields: list[dict] = []
+    needs_verification_id = any(
+        getattr(m, "firebase_pattern", None) in {"phone_auth", "credential_sign_in"}
+        for m in methods
+    )
+    if needs_verification_id:
+        fields.append({"name": "savedVerificationId", "type": "String", "default": '""', "volatile": True})
+    return fields
+
+
+def _infer_firebase_pattern_imports(methods: list[Any]) -> list[str]:
+    """Collect extra imports required by firebase_pattern stubs."""
+    imports: list[str] = []
+    for m in methods:
+        pattern = getattr(m, "firebase_pattern", None)
+        if pattern and pattern in _FIREBASE_PATTERN_IMPORTS:
+            imports.extend(_FIREBASE_PATTERN_IMPORTS[pattern])
+    return imports
+
+
+# ── UI component renderer ─────────────────────────────────────────────────────
+
+_UI_COMPONENT_EXTRA_IMPORTS: dict[str, list[str]] = {
+    "OtpDigitRow": [
+        "androidx.compose.ui.focus.FocusRequester",
+        "androidx.compose.ui.focus.focusRequester",
+        "androidx.compose.foundation.layout.Row",
+        "androidx.compose.foundation.layout.Arrangement",
+        "androidx.compose.foundation.text.KeyboardOptions",
+        "androidx.compose.ui.text.input.KeyboardType",
+        "androidx.compose.ui.text.style.TextAlign",
+        "androidx.compose.runtime.remember",
+    ],
+    "OutlinedTextField": [
+        "androidx.compose.material3.OutlinedTextField",
+        "androidx.compose.foundation.text.KeyboardOptions",
+        "androidx.compose.ui.text.input.KeyboardType",
+    ],
+    "Button": ["androidx.compose.material3.Button"],
+    "TextButton": ["androidx.compose.material3.TextButton"],
+    "ErrorText": ["androidx.compose.material3.Text"],
+    "OfflineBanner": [
+        "androidx.compose.material3.Card",
+        "androidx.compose.material3.CardDefaults",
+    ],
+    "TimerText": ["androidx.compose.material3.Text", "androidx.compose.material3.TextButton"],
+}
+
+_COMMON_SCAFFOLD_IMPORTS = [
+    "androidx.compose.foundation.layout.Arrangement",
+    "androidx.compose.foundation.layout.Column",
+    "androidx.compose.foundation.layout.Spacer",
+    "androidx.compose.foundation.layout.fillMaxSize",
+    "androidx.compose.foundation.layout.fillMaxWidth",
+    "androidx.compose.foundation.layout.height",
+    "androidx.compose.foundation.layout.padding",
+    "androidx.compose.foundation.layout.size",
+    "androidx.compose.foundation.layout.imePadding",
+    "androidx.compose.material3.CircularProgressIndicator",
+    "androidx.compose.material3.MaterialTheme",
+    "androidx.compose.material3.Text",
+    "androidx.compose.ui.Alignment",
+    "androidx.compose.ui.Modifier",
+    "androidx.compose.ui.unit.dp",
+]
+
+
+def _screen_component_imports(components: list[Any]) -> list[str]:
+    if not components:
+        return []
+    imports = list(_COMMON_SCAFFOLD_IMPORTS)
+    for c in components:
+        imports.extend(_UI_COMPONENT_EXTRA_IMPORTS.get(c.type, []))
+    return sorted(set(imports))
+
+
+def _render_ui_components(components: list[Any]) -> str:
+    """Render UiComponent list to a Kotlin Column body string."""
+    if not components:
+        return "    // TODO: implement screen content"
+    lines: list[str] = [
+        "    Column(",
+        "        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp).imePadding(),",
+        "        verticalArrangement = Arrangement.Center,",
+        "        horizontalAlignment = Alignment.CenterHorizontally,",
+        "    ) {",
+    ]
+    for c in components:
+        lines.extend(_render_component(c))
+        lines.append("        Spacer(modifier = Modifier.height(16.dp))")
+    lines.append("    }")
+    return "\n".join(lines)
+
+
+def _render_component(c: Any) -> list[str]:  # noqa: PLR0911
+    t = c.type
+    if t == "OutlinedTextField":
+        return _render_text_field(c)
+    if t == "Button":
+        return _render_button(c)
+    if t == "TextButton":
+        return _render_text_button(c)
+    if t == "ErrorText":
+        return _render_error_text(c)
+    if t == "OtpDigitRow":
+        return _render_otp_digit_row(c)
+    if t == "TimerText":
+        return _render_timer_text(c)
+    if t == "OfflineBanner":
+        return _render_offline_banner(c)
+    return [f"        // TODO: render {t}"]
+
+
+def _render_text_field(c: Any) -> list[str]:
+    bound = c.bound_to or "value"
+    action = c.action or "on${bound.capitalize()}Changed"
+    label = c.label or bound
+    lines = [
+        "        OutlinedTextField(",
+        f'            value = uiState.{bound},',
+        f"            onValueChange = {action},",
+        f'            label = {{ Text("{label}") }},',
+    ]
+    if c.prefix:
+        lines.append(f'            prefix = {{ Text("{c.prefix}") }},')
+    lines += [
+        "            singleLine = true,",
+        "            modifier = Modifier.fillMaxWidth(),",
+        "        )",
+    ]
+    return lines
+
+
+def _render_button(c: Any) -> list[str]:
+    action = c.action or "onClick"
+    label = c.label or "Submit"
+    lines = ["        Button("]
+    lines.append(f"            onClick = {action},")
+    if c.enabled_when:
+        lines.append(f"            enabled = {c.enabled_when},")
+    lines.append("            modifier = Modifier.fillMaxWidth(),")
+    lines.append("        ) {")
+    if c.loading_when:
+        lines += [
+            f"            if (uiState.{c.loading_when}) {{",
+            "                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)",
+            "            } else {",
+            f'                Text("{label}")',
+            "            }",
+        ]
+    else:
+        lines.append(f'            Text("{label}")')
+    lines.append("        }")
+    return lines
+
+
+def _render_text_button(c: Any) -> list[str]:
+    action = c.action or "onClick"
+    label = c.label or "Action"
+    enabled = f"enabled = !uiState.{c.loading_when}, " if c.loading_when else ""
+    return [f'        TextButton(onClick = {action}, {enabled}) {{ Text("{label}") }}']
+
+
+def _render_error_text(c: Any) -> list[str]:
+    field = c.error_field or "errorMessage"
+    lines = [
+        f"        uiState.{field}?.let {{ msg ->",
+        "            Text(text = msg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)",
+    ]
+    if c.retry_action:
+        lines.append(f'            TextButton(onClick = {c.retry_action}) {{ Text("Retry") }}')
+    lines.append("        }")
+    return lines
+
+
+def _render_otp_digit_row(c: Any) -> list[str]:
+    count = c.count or 6
+    bound = c.bound_to or "digits"
+    action = c.action or "onOtpChanged"
+    return [
+        f"        val focusRequesters = remember {{ List({count}) {{ FocusRequester() }} }}",
+        "        Row(",
+        "            horizontalArrangement = Arrangement.spacedBy(8.dp),",
+        "            modifier = Modifier.fillMaxWidth(),",
+        "        ) {",
+        f"            uiState.{bound}.forEachIndexed {{ index, digit ->",
+        "                OutlinedTextField(",
+        "                    value = digit,",
+        "                    onValueChange = { raw ->",
+        "                        val filtered = raw.filter { it.isDigit() }.take(1)",
+        f"                        val updated = uiState.{bound}.toMutableList().also {{ it[index] = filtered }}",
+        f"                        {action}(updated)",
+        f"                        if (filtered.isNotEmpty() && index < {count - 1}) focusRequesters[index + 1].requestFocus()",
+        "                    },",
+        "                    singleLine = true,",
+        "                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),",
+        "                    textStyle = MaterialTheme.typography.titleLarge.copy(textAlign = TextAlign.Center),",
+        "                    modifier = Modifier.weight(1f).focusRequester(focusRequesters[index]),",
+        "                )",
+        "            }",
+        "        }",
+    ]
+
+
+def _render_timer_text(c: Any) -> list[str]:
+    field = c.bound_to or "resendSecondsRemaining"
+    action = c.action or "onResendClicked"
+    loading = c.loading_when or "isResending"
+    return [
+        f"        if (uiState.{field} > 0) {{",
+        f'            Text("Resend OTP in ${{uiState.{field}}}s", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)',
+        "        } else {",
+        f"            TextButton(onClick = {action}, enabled = !uiState.{loading}) {{",
+        '                Text("Resend OTP")',
+        "            }",
+        "        }",
+    ]
+
+
+def _render_offline_banner(c: Any) -> list[str]:
+    field = c.bound_to or "isOfflineMode"
+    label = c.label or "You are offline. Please check your connection."
+    return [
+        f"        if (uiState.{field}) {{",
+        "            Card(",
+        "                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),",
+        "                modifier = Modifier.fillMaxWidth(),",
+        "            ) {",
+        f'                Text("{label}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(12.dp))',
+        "            }",
+        "        }",
+    ]

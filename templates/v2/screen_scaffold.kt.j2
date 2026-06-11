@@ -36,5 +36,5 @@ private fun {{ screen_name }}Content(
     uiState: {{ ui_state_class }},
 {% for fn in viewmodel_functions %}    {{ fn.name }}: ({% for p in fn.params %}{{ p }}{% if not loop.last %}, {% endif %}{% endfor %}) -> Unit,
 {% endfor %}) {
-    // TODO: implement screen content
+{{ ui_content }}
 }

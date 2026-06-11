@@ -80,6 +80,22 @@ class StateMachine(StrictModel):
     transitions: list[StateTransition] = Field(default_factory=list)
 
 
+# ── v3: Screen scaffold hints ────────────────────────────────────────────────
+
+class UiComponent(StrictModel):
+    """Describes a single UI widget in a screen scaffold so the template can render it."""
+    type: str  # OutlinedTextField | Button | TextButton | ErrorText | OtpDigitRow | TimerText | OfflineBanner
+    bound_to: str | None = None      # state field name for value binding
+    label: str | None = None
+    prefix: str | None = None        # e.g. "+91 " for phone fields
+    enabled_when: str | None = None  # Kotlin expression referencing uiState fields
+    action: str | None = None        # ViewModel function name to wire onClick/onValueChange
+    loading_when: str | None = None  # boolean state field that shows a spinner inside Button
+    error_field: str | None = None   # for ErrorText: which state field holds the message
+    retry_action: str | None = None  # for ErrorText: retry function name
+    count: int | None = None         # for OtpDigitRow: number of digit boxes
+
+
 class Screen(StrictModel):
     id: str
     route: str | None = None
@@ -100,6 +116,8 @@ class Screen(StrictModel):
     generated: bool = False
     file_path: str | None = None
     last_generated: str | None = None
+    # v3: component-level scaffold hints
+    ui_components: list[UiComponent] = Field(default_factory=list)
 
 
 class ViewModelFunction(StrictModel):
@@ -131,6 +149,31 @@ class DataSource(StrictModel):
     import_path: str | None = None
 
 
+# ── v3: ViewModel spec additions ─────────────────────────────────────────────
+
+class PrivateField(StrictModel):
+    """A non-injected mutable field on a ViewModel or Repository implementation."""
+    name: str
+    type: str
+    default: str = '""'
+    volatile: bool = False
+
+
+class PrivateFunction(StrictModel):
+    """A private helper function generated as a stub with a body_hint comment."""
+    name: str
+    signature: str = "()"
+    return_type: str = "Unit"
+    body_hint: str = "TODO"
+
+
+class ComputedProperty(StrictModel):
+    """A deterministic computed val derived from uiState fields."""
+    name: str
+    type: str
+    expression: str  # e.g. "_uiState.value.digits.all { it.length == 1 } && !_uiState.value.isVerifying"
+
+
 class ViewModel(StrictModel):
     id: str
     screen: str | None = None
@@ -149,6 +192,11 @@ class ViewModel(StrictModel):
     has_saved_state: bool = False
     state_fields: list[StateField] = Field(default_factory=list)
     events: list[EventSpec] = Field(default_factory=list)
+    # v3 enriched fields
+    private_fields: list[PrivateField] = Field(default_factory=list)
+    init_lines: list[str] = Field(default_factory=list)
+    private_functions: list[PrivateFunction] = Field(default_factory=list)
+    computed_properties: list[ComputedProperty] = Field(default_factory=list)
 
 
 class RepositoryMethod(StrictModel):
@@ -160,6 +208,8 @@ class RepositoryMethod(StrictModel):
     is_flow: bool = False
     result_type: str | None = None
     flow_type: str | None = None
+    # v3: hints for deterministic stub generation
+    firebase_pattern: str | None = None  # auth_state_listener | phone_auth | credential_sign_in | firestore_get | firestore_update
 
 
 class Repository(StrictModel):
@@ -326,4 +376,3 @@ class ProjectBrain(StrictModel):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
