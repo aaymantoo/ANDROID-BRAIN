@@ -33,6 +33,22 @@ class GenerationTools:
         )
         self._brain = brain
         self._output_base = output_base
+        self._audit_cache: dict[str, Any] | None = None
+
+    def _get_audit_block(self) -> dict[str, Any] | None:
+        """Lazily run audit_brain once; return error dict if generation is blocked."""
+        if self._audit_cache is None:
+            from project_brain.tools.validation_tools import audit_brain_instance
+            self._audit_cache = audit_brain_instance(self._brain)
+        if not self._audit_cache["generation_allowed"]:
+            top = self._audit_cache["critical_issues"][:3]
+            return {
+                "error": "Brain audit failed — run audit_brain() to see all issues.",
+                "audit_score": self._audit_cache["score"],
+                "critical_issues": top,
+                "generation_allowed": False,
+            }
+        return None
 
     # ── path helpers ──────────────────────────────────────────────────────────
 
@@ -62,14 +78,20 @@ class GenerationTools:
     # ── generation tools ──────────────────────────────────────────────────────
 
     async def generate_viewmodel(self, screen_id: str, output_path: str | None = None) -> dict[str, Any]:
+        if block := self._get_audit_block():
+            return block
         result = await self._orchestrator.generate_viewmodel(screen_id)
         return self._write_and_return(result, self._resolve("viewmodel", screen_id, output_path))
 
     async def generate_ui_state(self, screen_id: str, output_path: str | None = None) -> dict[str, Any]:
+        if block := self._get_audit_block():
+            return block
         result = await self._orchestrator.generate_ui_state(screen_id)
         return self._write_and_return(result, self._resolve("ui_state", screen_id, output_path))
 
     async def generate_repository(self, repository_id: str, output_path: str | None = None) -> dict[str, Any]:
+        if block := self._get_audit_block():
+            return block
         dest = self._resolve("repository_interface", repository_id, output_path)
         if dest:
             pair = await self._orchestrator.generate_repository_pair(repository_id)
@@ -92,26 +114,38 @@ class GenerationTools:
         return result.to_dict()
 
     async def generate_datamodel(self, model_id: str, output_path: str | None = None) -> dict[str, Any]:
+        if block := self._get_audit_block():
+            return block
         result = await self._orchestrator.generate_datamodel(model_id)
         return self._write_and_return(result, self._resolve("datamodel", model_id, output_path))
 
     async def generate_screen_scaffold(self, screen_id: str, output_path: str | None = None) -> dict[str, Any]:
+        if block := self._get_audit_block():
+            return block
         result = await self._orchestrator.generate_screen_scaffold(screen_id)
         return self._write_and_return(result, self._resolve("scaffold", screen_id, output_path))
 
     async def generate_usecase(self, usecase_name: str, output_path: str | None = None) -> dict[str, Any]:
+        if block := self._get_audit_block():
+            return block
         result = await self._orchestrator.generate_usecase(usecase_name)
         return self._write_and_return(result, self._resolve("usecase", usecase_name, output_path))
 
     async def generate_di_module(self, feature_name: str, output_path: str | None = None) -> dict[str, Any]:
+        if block := self._get_audit_block():
+            return block
         result = await self._orchestrator.generate_di_module(feature_name)
         return self._write_and_return(result, self._resolve("di_module", feature_name, output_path))
 
     async def generate_nav_route(self, screen_id: str, output_path: str | None = None) -> dict[str, Any]:
+        if block := self._get_audit_block():
+            return block
         result = await self._orchestrator.generate_nav_route(screen_id)
         return self._write_and_return(result, self._resolve("nav_route", screen_id, output_path))
 
     async def generate_viewmodel_test(self, screen_id: str, output_path: str | None = None) -> dict[str, Any]:
+        if block := self._get_audit_block():
+            return block
         result = await self._orchestrator.generate_viewmodel_test(screen_id)
         return self._write_and_return(result, self._resolve("test", screen_id, output_path))
 

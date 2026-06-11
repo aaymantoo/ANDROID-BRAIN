@@ -31,6 +31,7 @@ from project_brain.tools.incremental_tools import (
     get_feature_artifacts,
 )
 from project_brain.tools.validation_tools import (
+    audit_brain_instance,
     validate_design_tokens_brain,
     validate_firestore_consistency_brain,
     validate_generation_brain,
@@ -367,6 +368,12 @@ class ToolRegistry:
                 lambda args: audit_production_readiness_brain(self.brain, int(args["phase"])),
             ),
             # ── Phase 5/6: validate_generation & sync_brain ──────────
+            ToolDefinition(
+                "audit_brain",
+                "Pre-generation brain integrity audit. Checks reference integrity, circular nav deps, feature completeness, and business rule coverage. Returns {status, score, critical_issues, warnings, feature_scores, generation_allowed}. Run after enrichment and before any generation tool.",
+                no_arg,
+                lambda _: audit_brain_instance(self.brain),
+            ),
             ToolDefinition(
                 "validate_generation",
                 "Compare generated files against Brain spec + ROADMAP.md + source PRD. Returns per-screen completeness % with brain_match / roadmap_match / prd_match verdict columns.",

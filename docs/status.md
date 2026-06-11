@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
+All phases complete (0B, 0C, 1–7) + Agent (Option A). **203 tests passing.**
 
 ## Phase Progress
 
@@ -17,13 +17,31 @@ All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
 | Phase 4 | Code generation engine (v1 + v2 templates, self-healing, DeterministicFunctionBodyGenerator) | Complete |
 | Phase 5 | Predictive bug engine (5 zero-LLM detectors) | **Complete** |
 | Phase 6 | Self-healing and sync (StateTransitionEngine, sync_brain) | **Complete** |
+| Phase 7 | Brain audit pre-generation gate (audit_brain, 39 MCP tools) | **Complete** |
 | Agent (Option A) | brain-build-agent Claude Code sub-agent, ui-agent, brain build CLI, logic fill pass prompt | **Complete** |
+
+---
+
+## Phase 7 Verification (Brain Audit)
+
+- **203 tests passing** (tool count updated: 38 → 39).
+- `audit_brain_instance()` (`project_brain/tools/validation_tools.py`) — single ~170-line zero-LLM function. Checks:
+  - **Reference integrity** — broken Screen→ViewModel/Repository links, ViewModel→Repository links
+  - **Navigation integrity** — dead nav routes, circular dependency (DFS), orphaned nav nodes
+  - **Feature/roadmap consistency** — features referencing unknown screens, phase mismatches
+  - **Screen completeness** — screens missing declared ViewModel or Repository
+  - **Business rule coverage** — rules not wired to any ViewModelFunction.business_rule or StateMachine transition
+- Returns `{status: PASS|FAIL, score: 0–100, critical_issues, warnings, feature_scores, generation_allowed}`.
+- Scoring: start at 100, −10 per critical issue, −3 per warning. `generation_allowed = False` when score < 60 OR any `broken_reference` / `circular_dependency` / `missing_screen` critical issue exists.
+- **Generation gate**: All 9 `generate_*` methods in `GenerationTools` call `_get_audit_block()` (lazily cached per instance) and return `{error, generation_allowed: false}` before any LLM work when audit fails.
+- Pipeline is now: `enrich → audit_brain → PASS → generation → validate_phase → forecast_bugs → sync_brain`.
+- New MCP tool: `audit_brain` (no args).
 
 ---
 
 ## Agent (Option A) Verification
 
-- **150 tests passing** — no regressions from agent layer additions.
+- **203 tests passing** — no regressions from agent layer additions.
 - `.claude/agents/brain-build-agent.md` — Claude Code sub-agent definition for the autonomous 13-step build loop. Claude Code IS the loop driver; all generation goes through MCP tools. Covers: session resume, task classification, dependency-ordered generation, logic fill pass (Step 7, token-minimal), UI design pass (Step 6c, conditional), compile gate, validate_generation ≥ 90% gate, validate_phase, forecast_bugs, sync_brain, and final audit_production_readiness. Includes token minimisation rules and progress reporting format.
 - `.claude/agents/ui-agent.md` — UI design pass agent (Step 6c). Reads design system files (design.md, Theme.kt, Typography.kt, Shape.kt, components/) and fills `// TODO: implement screen content` inside scaffold files using only MaterialTheme tokens.
 - `prompts/logic_fill_pass.txt` — Logic fill pass prompt. Used in Step 7 when `spec_coverage < 1.0 AND used_llm == False`. Provides ViewModel and Repository Kotlin rules for filling TODO stubs.
@@ -36,7 +54,7 @@ All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
 
 ## Phase 5 & 6 Verification (Phases filled from stubs)
 
-- **150 tests passing** (17 new tests in `tests/test_new_phases.py`).
+- **150 tests passing** at the time (17 new tests in `tests/test_new_phases.py`).
 - `BugEngine` (`project_brain/engines/bug_engine.py`) — 5 zero-LLM detectors:
   - D1 `StateTransitionBugDetector` — missing `required_firestore_updates` in state machine transitions
   - D2 `FirestoreConsistencyDetector` — `consistency_links` not honored across screens
@@ -46,7 +64,7 @@ All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
 - `StateTransitionEngine` (`project_brain/engines/state_engine.py`) — validates transitions against file content; `validate_transition()`, `validate_file()`, `validate_brain()`.
 - `sync_brain` (`project_brain/tools/management_tools.py`) — scans `generation_history` files, diffs extracted function names vs. brain spec, reports deleted/drifted files and updates `known_violations`.
 - `validate_generation` (`project_brain/tools/validation_tools.py`) — three-column per-screen verdict (`brain_match` / `roadmap_match` / `prd_match`), `completeness_pct` (0–100), `function_coverage` dict.
-- Registry: **35 tools** (6 new: `forecast_bugs`, `detect_race_conditions`, `detect_orphaned_documents`, `audit_production_readiness`, `validate_generation`, `sync_brain`).
+- Registry: **35 tools** at the time (6 new: `forecast_bugs`, `detect_race_conditions`, `detect_orphaned_documents`, `audit_production_readiness`, `validate_generation`, `sync_brain`).
 
 ## Phase 4 Gap-Filling Verification
 
@@ -114,7 +132,7 @@ All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
 - Full unittest discovery passed: 48 tests at the time.
 - `test_template_engine` (14 tests): all 10 Jinja2 templates render, produce correct Kotlin structures, context builders extract the right brain data.
 - `test_generation_tools` (14 tests): self-healing orchestrator, NullAdapter graceful degradation, all 9 generation methods, registry wiring.
-- Registry exposes 35 tools total (29 + 6 new Phase 5/6 tools).
+- Registry exposes 35 tools total at the time (29 + 6 new Phase 5/6 tools).
 - `brain rollback <file_path>` CLI command added.
 - v2 enterprise templates auto-selected when brain contains enriched ViewModel data (`ui_state_type="data_class"` or `state_fields` or `events`).
 
@@ -134,8 +152,11 @@ All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
 - `brain serve` — starts the stdio MCP server using `BRAIN_PATH` or `./PROJECT_BRAIN.json`.
 - `brain build --output <dir> [--prd FILE] [--phase N] [--screen ID] [--resume] [--design-system DIR]` — Agent: enrich + init (if --prd), verify brain, print agent invocation prompt, start brain serve.
 - `brain rollback <file>` — restores the most recent `.brain_backup_*` for a generated file.
+- `brain enrich-feature <id> --prd <file>` — incremental: enrich one feature.
+- `brain enrich-phase <name> --prd <file>` — incremental: enrich all features in a phase.
+- `brain resume --prd <file>` — incremental: continue from last checkpoint.
 
-### MCP tools (35 total)
+### MCP tools (39 total)
 
 **Roadmap & pipeline (Phase 0C):**
 `get_session_context` · `get_next_task` · `get_feature_status` · `get_project_roadmap`
@@ -143,8 +164,8 @@ All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
 **Read (Phase 2):**
 `get_project_context` · `get_screen_graph` · `get_phase_status` · `get_all_screens` · `get_dependencies` · `get_firestore_schema` · `get_business_rules` · `get_state_machine` · `get_design_tokens` · `get_navigation_graph`
 
-**Validation (Phase 3 + Phase C):**
-`validate_mvvm` · `validate_phase` · `validate_firestore_consistency` · `validate_state_transitions` · `validate_design_tokens` · `validate_naming_conventions` · `validate_generation`
+**Validation (Phase 3 + Phase 5/6 + Phase 7):**
+`audit_brain` · `validate_mvvm` · `validate_phase` · `validate_firestore_consistency` · `validate_state_transitions` · `validate_design_tokens` · `validate_naming_conventions` · `validate_generation`
 
 **Generation (Phase 4):**
 `generate_viewmodel` · `generate_ui_state` · `generate_repository` · `generate_datamodel` · `generate_screen_scaffold` · `generate_usecase` · `generate_di_module` · `generate_nav_route` · `generate_viewmodel_test`
@@ -154,6 +175,9 @@ All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
 
 **Sync (Phase 6):**
 `sync_brain`
+
+**Incremental enrichment:**
+`get_enrichment_status` · `get_feature_artifacts` · `aggregate_brain`
 
 ---
 
@@ -165,3 +189,4 @@ All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
 - `features` list in `ProjectBrain` is populated only when the brain was produced from an enriched PRD that includes feature groupings. Brains from `--from-code` will have an empty `features` list; roadmap tools fall back to a flat screen table in that case.
 - `CompileVerifier` is non-blocking and skipped when `kotlinc` is not on PATH. Generated files are written regardless.
 - `BugEngine` detectors read file content from disk; forecasts are only meaningful after files have been written with `output_path`.
+- `audit_brain` generation gate is cached per `GenerationTools` instance (one audit per MCP server session). If the brain is mutated mid-session, restart `brain serve` to re-trigger the audit.

@@ -197,8 +197,9 @@ brain serve ──► server.py ──► ToolRegistry(brain) ──► MCP tool
 - **Phase 4 (Code Generation)** — complete. Template engine (v1 + v2), LLM adapters, `DeterministicFunctionBodyGenerator`, self-healing orchestrator, 9 generation tools, repository two-file split, `CompileVerifier`, `spec_coverage` and `bug_warnings` on `GenerationResult`.
 - **Phase 5 (Bug Forecasting)** — complete. `BugEngine` with 5 zero-LLM detectors. Four MCP tools.
 - **Phase 6 (Self-Healing & Sync)** — complete. `StateTransitionEngine`, `sync_brain`. `brain sync` CLI command.
+- **Phase 7 (Brain Audit)** — complete. `audit_brain` MCP tool. Pre-generation gate: reference integrity, circular nav deps, feature completeness, business rule coverage. All 9 generation tools refuse when `generation_allowed=false`.
 
-### MCP tool catalogue (38 tools — all live)
+### MCP tool catalogue (39 tools — all live)
 
 Read tools (no arguments unless noted):
 - `get_project_context` — meta, architecture, phases, design system
@@ -213,6 +214,7 @@ Read tools (no arguments unless noted):
 - `get_navigation_graph` — full navigation graph
 
 Validation tools:
+- `audit_brain` — pre-generation integrity audit; returns `{status, score, critical_issues, warnings, feature_scores, generation_allowed}`; generation tools refuse when `generation_allowed=false`
 - `validate_mvvm(file_path)` — run CLASS_A/B/C MVVM rules against a Kotlin file
 - `validate_phase(phase)` — validate all phase files from the brain
 - `validate_firestore_consistency` — check brain rules vs. Firestore declarations

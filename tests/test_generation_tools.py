@@ -91,8 +91,8 @@ class RegistryPhase4Test(unittest.IsolatedAsyncioTestCase):
 
     def test_registry_exposes_all_tools(self) -> None:
         names = [tool.name for tool in self.registry.list_definitions()]
-        # 35 original + 3 incremental enrichment tools
-        self.assertEqual(len(names), 38)
+        # 35 original + 3 incremental enrichment tools + 1 audit_brain
+        self.assertEqual(len(names), 39)
 
     def test_all_generation_tools_registered(self) -> None:
         names = {tool.name for tool in self.registry.list_definitions()}

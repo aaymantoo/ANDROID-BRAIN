@@ -302,6 +302,191 @@ def _find_generated_file(screen_id: str, component: str, brain: ProjectBrain) ->
     return None
 
 
+# ── Phase 7: audit_brain ─────────────────────────────────────────────────────
+
+
+def audit_brain(brain_path: str = "PROJECT_BRAIN.json") -> dict[str, Any]:
+    """Load brain from path and run integrity audit."""
+    brain = BrainManager(brain_path).load()
+    return audit_brain_instance(brain)
+
+
+def audit_brain_instance(brain: ProjectBrain) -> dict[str, Any]:
+    """Pre-generation brain integrity audit (zero-LLM).
+
+    Checks reference integrity, nav circular deps, feature completeness,
+    and business rule coverage.  Returns generation_allowed=False if any
+    critical issue is found or score < 60.
+    """
+    critical: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+
+    vm_ids = {v.id for v in brain.viewmodels}
+    repo_ids = {r.id for r in brain.repositories}
+    screen_ids = {s.id for s in brain.screens}
+    route_ids = {r.id for r in brain.navigation_graph.routes}
+    rule_ids = {r.id for r in brain.business_rules}
+
+    # ── 1. Reference integrity ─────────────────────────────────────────
+    for screen in brain.screens:
+        if screen.viewmodel and screen.viewmodel not in vm_ids:
+            critical.append({
+                "check": "broken_reference",
+                "message": f"Screen '{screen.id}' → ViewModel '{screen.viewmodel}' not found",
+            })
+        if screen.repository and screen.repository not in repo_ids:
+            critical.append({
+                "check": "broken_reference",
+                "message": f"Screen '{screen.id}' → Repository '{screen.repository}' not found",
+            })
+
+    for vm in brain.viewmodels:
+        if vm.repository and vm.repository not in repo_ids:
+            critical.append({
+                "check": "broken_reference",
+                "message": f"ViewModel '{vm.id}' → Repository '{vm.repository}' not found",
+            })
+
+    # ── 2. Navigation integrity ────────────────────────────────────────
+    reachable: set[str] = set()
+    for route in brain.navigation_graph.routes:
+        for dest in route.next:
+            reachable.add(dest)
+            if dest not in route_ids and dest not in screen_ids:
+                critical.append({
+                    "check": "dead_nav_route",
+                    "message": f"Nav route '{route.id}' → unknown destination '{dest}'",
+                })
+
+    # Circular dep via DFS
+    adj: dict[str, list[str]] = {r.id: list(r.next) for r in brain.navigation_graph.routes}
+    visited: set[str] = set()
+    in_stack: set[str] = set()
+    cycle_found = False
+
+    def _has_cycle(node: str) -> bool:
+        visited.add(node)
+        in_stack.add(node)
+        for nb in adj.get(node, []):
+            if nb not in visited:
+                if _has_cycle(nb):
+                    return True
+            elif nb in in_stack:
+                return True
+        in_stack.discard(node)
+        return False
+
+    for node in list(adj):
+        if node not in visited and not cycle_found:
+            if _has_cycle(node):
+                critical.append({
+                    "check": "circular_dependency",
+                    "message": f"Circular navigation dependency detected from '{node}'",
+                })
+                cycle_found = True
+
+    # Orphaned nav nodes (declared but never reachable and not start_destination)
+    start = brain.navigation_graph.start_destination
+    for route in brain.navigation_graph.routes:
+        if route.id != start and route.id not in reachable and route_ids:
+            warnings.append({
+                "check": "orphaned_nav_node",
+                "message": f"Nav route '{route.id}' is unreachable from any other route",
+            })
+
+    # ── 3. Feature / roadmap consistency ──────────────────────────────
+    for feature in brain.features:
+        for sid in feature.screens:
+            if sid not in screen_ids:
+                critical.append({
+                    "check": "missing_screen",
+                    "message": f"Feature '{feature.id}' references screen '{sid}' not in brain.screens",
+                })
+        if not feature.screens:
+            warnings.append({
+                "check": "empty_feature",
+                "message": f"Feature '{feature.id}' has no screens",
+            })
+
+    for phase in brain.phases:
+        for sid in phase.screens:
+            if sid not in screen_ids:
+                warnings.append({
+                    "check": "roadmap_mismatch",
+                    "message": f"Phase {phase.number} references screen '{sid}' not in brain.screens",
+                })
+
+    # ── 4. Screen completeness ─────────────────────────────────────────
+    for screen in brain.screens:
+        if not screen.viewmodel:
+            warnings.append({
+                "check": "missing_viewmodel",
+                "message": f"Screen '{screen.id}' has no ViewModel declared",
+            })
+        if not screen.repository:
+            warnings.append({
+                "check": "missing_repository",
+                "message": f"Screen '{screen.id}' has no Repository declared",
+            })
+
+    # ── 5. Business rule coverage ──────────────────────────────────────
+    covered: set[str] = set()
+    for vm in brain.viewmodels:
+        for fn in vm.functions:
+            if fn.business_rule and fn.business_rule in rule_ids:
+                covered.add(fn.business_rule)
+    for sm in brain.state_machines:
+        for t in sm.transitions:
+            impl = t.recommended_implementation or ""
+            for rid in rule_ids:
+                if rid in impl:
+                    covered.add(rid)
+
+    for rid in rule_ids - covered:
+        warnings.append({
+            "check": "uncovered_business_rule",
+            "message": f"Business rule '{rid}' not wired to any ViewModel function or state machine",
+        })
+
+    # ── 6. Per-feature scores ──────────────────────────────────────────
+    feature_scores: dict[str, int] = {}
+    for feature in brain.features:
+        f_screens = set(feature.screens)
+        f_crit = sum(
+            1 for i in critical
+            if feature.id in i["message"] or any(s in i["message"] for s in f_screens)
+        )
+        f_warn = sum(
+            1 for w in warnings
+            if feature.id in w["message"] or any(s in w["message"] for s in f_screens)
+        )
+        feature_scores[feature.id] = max(0, 100 - f_crit * 15 - f_warn * 5)
+
+    # ── 7. Aggregate score & gate ──────────────────────────────────────
+    score = max(0, 100 - len(critical) * 10 - len(warnings) * 3)
+    blocking_checks = {"broken_reference", "circular_dependency", "missing_screen"}
+    has_blocker = any(i["check"] in blocking_checks for i in critical)
+    generation_allowed = not has_blocker and score >= 60
+
+    return {
+        "status": "PASS" if generation_allowed else "FAIL",
+        "score": score,
+        "critical_issues": critical,
+        "warnings": warnings,
+        "feature_scores": feature_scores,
+        "generation_allowed": generation_allowed,
+        "summary": {
+            "screens": len(brain.screens),
+            "viewmodels": len(brain.viewmodels),
+            "repositories": len(brain.repositories),
+            "business_rules": len(rule_ids),
+            "covered_rules": len(covered),
+            "critical_count": len(critical),
+            "warning_count": len(warnings),
+        },
+    }
+
+
 def _load_prd(brain_path: Path | None) -> str | None:
     """Try to load the source PRD from the directory containing the brain file."""
     if brain_path is None:
