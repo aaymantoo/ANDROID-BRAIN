@@ -377,6 +377,193 @@ The `brain-build-agent` Claude Code sub-agent drives a 13-step loop until the en
 
 ---
 
+## v3 Brain Spec — Richer Brain, Less TODO
+
+By default, the generator produces correct skeletons with `// TODO: implement` stubs for logic it cannot derive deterministically. The **v3 brain spec fields** let you annotate the brain JSON with enough intent that the generator fills those stubs itself — no LLM pass, no manual editing.
+
+These fields are all optional. Omit any you don't need; the generator falls back to its existing behaviour.
+
+### `ViewModel` — private fields, init block, helpers, computed guards
+
+Add these to any `viewmodels[*]` entry in `PROJECT_BRAIN.json`:
+
+```jsonc
+{
+  "id": "OtpViewModel",
+  // ... existing fields ...
+
+  // Mutable fields not injected via constructor
+  "private_fields": [
+    { "name": "savedVerificationId", "type": "String", "default": "\"\"", "volatile": true }
+  ],
+
+  // Lines emitted inside init { }
+  "init_lines": [
+    "savedStateHandle.get<String>(\"phone\")?.let { _uiState.update { s -> s.copy(phoneNumber = it) } }",
+    "startResendCountdown()"
+  ],
+
+  // Private helpers stubbed with a self-documenting body_hint comment
+  "private_functions": [
+    {
+      "name": "startResendCountdown",
+      "signature": "()",
+      "return_type": "Unit",
+      "body_hint": "countdown from 60 to 0 with delay(1000), updating resendSecondsRemaining each tick"
+    },
+    {
+      "name": "validateIndianPhoneNumber",
+      "signature": "(phone: String)",
+      "return_type": "Boolean",
+      "body_hint": "phone.length == 10 && phone.first() in '6'..'9'"
+    }
+  ],
+
+  // Deterministic computed vals — generated as private val with a get() expression, zero LLM
+  "computed_properties": [
+    {
+      "name": "canVerify",
+      "type": "Boolean",
+      "expression": "_uiState.value.digits.all { it.length == 1 } && !_uiState.value.isVerifying"
+    },
+    {
+      "name": "canResend",
+      "type": "Boolean",
+      "expression": "_uiState.value.resendSecondsRemaining == 0 && !_uiState.value.isResending && !_uiState.value.isVerifying"
+    }
+  ]
+}
+```
+
+**What you get:**
+
+```kotlin
+// private_fields
+@Volatile private var savedVerificationId: String = ""
+
+// init_lines
+init {
+    savedStateHandle.get<String>("phone")?.let { _uiState.update { s -> s.copy(phoneNumber = it) } }
+    startResendCountdown()
+}
+
+// computed_properties
+private val canVerify: Boolean get() = _uiState.value.digits.all { it.length == 1 } && !_uiState.value.isVerifying
+
+// private_functions — stubbed with hint comment for the logic fill pass
+private fun startResendCountdown(): Unit {
+    // countdown from 60 to 0 with delay(1000), updating resendSecondsRemaining each tick
+    // TODO: implement
+}
+```
+
+### `RepositoryMethod` — Firebase pattern stubs
+
+Add `firebase_pattern` to any `repositories[*].methods[*]` entry to replace a bare `// TODO` with a complete, compilable implementation skeleton:
+
+```jsonc
+{
+  "name": "observeAuthState",
+  "is_flow": true,
+  "flow_type": "AppResult<User?>",
+  "firebase_pattern": "auth_state_listener"   // ← new
+},
+{
+  "name": "sendOtp",
+  "params": ["phoneNumber: String"],
+  "result_wrapped": true,
+  "result_type": "Unit",
+  "firebase_pattern": "phone_auth"            // ← new
+},
+{
+  "name": "verifyOtp",
+  "params": ["phoneNumber: String", "otp: String"],
+  "result_wrapped": true,
+  "result_type": "User",
+  "firebase_pattern": "credential_sign_in"    // ← new
+},
+{
+  "name": "completeProfileSetup",
+  "params": ["name: String", "email: String"],
+  "result_wrapped": true,
+  "result_type": "User",
+  "firebase_pattern": "firestore_update",
+  "firestore_path": "/users"                  // ← collection name used in stub
+}
+```
+
+| `firebase_pattern` | Emits |
+|---|---|
+| `auth_state_listener` | `callbackFlow { firebaseAuth.addAuthStateListener { … }; awaitClose { … } }` |
+| `phone_auth` | `suspendCancellableCoroutine` + full `PhoneAuthProvider.OnVerificationStateChangedCallbacks` |
+| `credential_sign_in` | `PhoneAuthProvider.getCredential(savedVerificationId, otp)` → `signInWithCredential` → Firestore fetch |
+| `firestore_get` | `runCatching { firestore.collection(…).document(uid).get().await() }` |
+| `firestore_update` | `runCatching { firestore.collection(…).document(uid).update(updates).await() }` |
+
+When `phone_auth` or `credential_sign_in` is present, the generator **automatically**:
+- Injects `@Volatile private var savedVerificationId: String = ""` into the class
+- Adds all required imports (`PhoneAuthProvider`, `PhoneAuthOptions`, `suspendCancellableCoroutine`, etc.)
+
+### `Screen` — UI component list for zero-TODO scaffolds
+
+Add `ui_components` to any `screens[*]` entry and `generate_screen_scaffold` will render a real `Column` body instead of `// TODO: implement screen content`:
+
+```jsonc
+{
+  "id": "PhoneEntryScreen",
+  // ... existing fields ...
+  "ui_components": [
+    {
+      "type": "OutlinedTextField",
+      "bound_to": "phoneNumber",
+      "label": "Mobile number",
+      "prefix": "+91 ",
+      "action": "onPhoneNumberChanged"
+    },
+    {
+      "type": "ErrorText",
+      "error_field": "errorMessage",
+      "retry_action": "retrySendOtp"
+    },
+    {
+      "type": "Button",
+      "label": "Send OTP",
+      "action": "onSendOtpClicked",
+      "enabled_when": "!uiState.isSendingOtp && uiState.phoneNumber.length == 10",
+      "loading_when": "isSendingOtp"
+    },
+    {
+      "type": "OfflineBanner",
+      "bound_to": "isOfflineMode"
+    }
+  ]
+}
+```
+
+Supported `type` values:
+
+| type | Renders |
+|---|---|
+| `OutlinedTextField` | Text input with optional `prefix`, wired to `action` |
+| `Button` | Primary button with optional `enabled_when` expression and loading spinner |
+| `TextButton` | Flat secondary button |
+| `ErrorText` | Conditional error message with optional "Retry" button |
+| `OtpDigitRow` | Row of `count` (default 6) single-char boxes with auto-focus advance |
+| `TimerText` | Countdown display (`bound_to > 0`) that switches to a "Resend OTP" button at zero |
+| `OfflineBanner` | `errorContainer` Card shown when `bound_to` state field is true |
+
+All components are wrapped in a `Column` with `fillMaxSize` + `padding(24.dp)` + `imePadding()`. The required Compose imports are added automatically.
+
+### Test stubs — correct field names, no manual fixes
+
+`generate_viewmodel_test` now reads `state_fields` from the brain instead of hardcoding field names:
+- **Loading field** — first `Boolean` field whose name contains `loading`, `sending`, `verifying`, `fetching`, etc.
+- **Error field** — first nullable `String` field whose name contains `error`, `message`, or `msg`
+- `Dispatchers.setMain` / `resetMain` always emitted in `@Before` / `@After`
+- `SavedStateHandle` injected into the test constructor when `has_saved_state = true`, pre-populated from `Screen.nav_args`
+
+---
+
 ## MCP Tool Catalogue (35 tools)
 
 ### Roadmap & pipeline tools — zero-LLM, call at session start
@@ -421,15 +608,15 @@ All generation tools: validate output → auto-fix CLASS_A violations → retry 
 
 | Tool | What it generates |
 |---|---|
-| `generate_viewmodel(screen_id)` | `@HiltViewModel` + `StateFlow` + `Channel<Event>`; deterministic filler fills 80–90 % of function bodies without LLM |
+| `generate_viewmodel(screen_id)` | `@HiltViewModel` + `StateFlow` + `Channel<Event>`; deterministic filler fills 80–90 % of function bodies without LLM. v3: emits `private_fields`, `init {}`, `computed_properties`, and `private_functions` sections from brain spec. |
 | `generate_ui_state(screen_id)` | `@Immutable data class` UiState (v2) or sealed class (v1) |
-| `generate_repository(repository_id)` | Interface `.kt` + `Impl.kt` as two separate files |
+| `generate_repository(repository_id)` | Interface `.kt` + `Impl.kt` as two separate files. v3: uses `firebase_pattern` to emit real Firebase boilerplate; auto-injects `savedVerificationId` and required imports. |
 | `generate_datamodel(model_id)` | `@Keep` data class with `@PropertyName` for Firestore |
-| `generate_screen_scaffold(screen_id)` | `@Composable` + `collectAsStateWithLifecycle` + Content composable split |
+| `generate_screen_scaffold(screen_id)` | `@Composable` + `collectAsStateWithLifecycle` + Content composable split. v3: renders a real `Column` UI body from `Screen.ui_components` — no `// TODO` stub when the component list is populated. |
 | `generate_usecase(usecase_name)` | Single-function `UseCase` with `invoke()` |
 | `generate_di_module(feature_name)` | Hilt `@Module @Binds` for feature repositories |
 | `generate_nav_route(screen_id)` | v2: route object + `NavController.navigateTo{Screen}()` extension + `NavGraphBuilder.{screen}Screen()` composable builder |
-| `generate_viewmodel_test(screen_id)` | mockk + `StandardTestDispatcher` + `runTest` scaffold |
+| `generate_viewmodel_test(screen_id)` | mockk + `StandardTestDispatcher` + `runTest` scaffold. v3: derives correct `state_fields` names for assertions; emits `Dispatchers.setMain/resetMain`; injects `SavedStateHandle` when `has_saved_state = true`. |
 
 ### Bug forecasting tools — zero-LLM, Phase 5
 
@@ -497,3 +684,4 @@ pytest tests/test_generation_tools.py -v  # Phase 4 generation + registry
 | 4 | Code generation: v1+v2 templates, DeterministicFunctionBodyGenerator, self-healing orchestrator, CompileVerifier, 9 generation tools | **Complete** |
 | 5 | Predictive bug engine: 5 zero-LLM detectors, 4 MCP tools | **Complete** |
 | 6 | Self-healing sync: StateTransitionEngine, sync_brain MCP tool | **Complete** |
+| v3 | Brain spec enrichment fields: `private_fields`, `init_lines`, `private_functions`, `computed_properties`, `firebase_pattern`, `ui_components` | **Complete** |
