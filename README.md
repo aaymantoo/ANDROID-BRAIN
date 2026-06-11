@@ -32,6 +32,7 @@ brain build --prd ./rough.md --output ./app/src/main/kotlin
      │
      └─▶  brain-build-agent (Claude Code sub-agent)
               │
+              ├─ audit_brain          ← integrity gate before any generation
               ├─ 13-step loop: get_next_task → generate → validate → forecast → sync
               ├─ Dependency order enforced: datamodel → repository → usecase → ui_state
               │  → viewmodel → scaffold → nav_route → di_module → tests
@@ -61,29 +62,35 @@ Run `brain doctor` at any time to see which adapter is active.
 ## Installation
 
 ```bash
-git clone <this-repo>
-cd BRAIN-MCP
+git clone https://github.com/aaymantoo/ANDROID-BRAIN.git brain-mcp
+cd brain-mcp
 pip install -e ".[dev]"
 
 # Confirm the LLM adapter detected
 brain doctor
 ```
 
+Expected output:
+
+```
+LLM adapter : ClaudeCodeCLIAdapter (claude CLI)
+CLI tools   : claude ✓  gemini ✗  llm ✗  ollama ✗
+API keys    : ANTHROPIC_API_KEY ✗  OPENAI_API_KEY ✗
+```
+
+If `brain` is not found after install, add the pip scripts directory to your PATH:
+- **Windows**: `%APPDATA%\Python\Python3xx\Scripts`
+- **macOS/Linux**: `~/.local/bin`
+
 ---
 
 ## Setup with Claude Code
 
-Claude Code is the recommended host. Brain Engine registers as an MCP server so Claude Code can call all tools directly inside your chat session.
+Claude Code is the recommended host. Brain Engine registers as an MCP server so Claude Code can call all 39 tools directly inside your chat session.
 
 ### Step 1 — Register the MCP server
 
-In your project directory (where `PROJECT_BRAIN.json` will live), run:
-
-```bash
-claude mcp add brain-engine -- brain serve
-```
-
-Or add it manually to `.claude/settings.json` (project-level) or `~/.claude/settings.json` (global):
+Create `.mcp.json` in your **Android project root** (where `PROJECT_BRAIN.json` will live):
 
 ```json
 {
@@ -92,69 +99,177 @@ Or add it manually to `.claude/settings.json` (project-level) or `~/.claude/sett
       "command": "brain",
       "args": ["serve"],
       "env": {
-        "BRAIN_PATH": "${workspaceFolder}/PROJECT_BRAIN.json"
+        "BRAIN_PATH": "./PROJECT_BRAIN.json"
       }
     }
   }
 }
 ```
 
-### Step 2 — Verify connection
+This tells Claude Code to launch `brain serve` whenever it opens that project.
 
-Inside a Claude Code session:
+**Or register globally** (`~/.claude/mcp.json`) using an absolute path — useful if you work across multiple Android projects:
+
+```json
+{
+  "mcpServers": {
+    "brain-engine": {
+      "command": "brain",
+      "args": ["serve"],
+      "env": {
+        "BRAIN_PATH": "/absolute/path/to/your/android/project/PROJECT_BRAIN.json"
+      }
+    }
+  }
+}
+```
+
+### Step 2 — Verify the connection
+
+Open your Android project in Claude Code and run:
 
 ```
 /mcp
 ```
 
-You should see `brain-engine` listed with all 35 tools available.
+You should see `brain-engine` listed as a connected server with **39 tools**.
 
-### Step 3 — Generate your brain
+### Step 3 — Prepare a PRD
+
+**Option A — Enrich a rough PRD (recommended):**
+
+You don't need a perfect PRD. Even rough notes work:
 
 ```bash
-# Option A: from a PRD
-brain enrich-prd ./my_prd.md --output ./enriched_prd.md
-brain init --from-prd ./enriched_prd.md
+brain enrich-prd ./rough_notes.md --output ./enriched_prd.md
+# Add --interactive to answer gap questions in the terminal
+brain enrich-prd ./rough_notes.md --output ./enriched_prd.md --interactive
+```
 
-# Option B: from an existing Android codebase
+The LLM fills every gap — ViewModel functions, state fields, repository method signatures, state machines, Firestore schema, business rules — and marks inferences as `[INFERRED]` and unknowns as `[UNKNOWN — please specify]`. Open the output and search for `[UNKNOWN]` to fill any fields it could not infer.
+
+**Option B — Use an existing PRD:**
+
+```bash
+brain validate-prd ./my_prd.md   # must score ≥ 80 / 100
+```
+
+The score must reach **80** before `brain init` will proceed. If it is lower, the output lists exactly which dimensions are incomplete.
+
+### Step 4 — Generate the brain
+
+```bash
+brain init --from-prd ./enriched_prd.md --output PROJECT_BRAIN.json
+brain status    # shows screen, ViewModel, repository, and feature counts
+```
+
+This produces `PROJECT_BRAIN.json` (the single source of truth) and `ROADMAP.md` (feature → screen → component status tree).
+
+**Or scan an existing Android codebase:**
+
+```bash
 brain init --from-code ./app/src/main/kotlin
 ```
 
-### Step 4 — Use it in Claude Code
+### Step 5 — Run the build agent
 
-Claude Code now has access to all Brain Engine tools. Example prompts:
+```bash
+brain build --prd ./enriched_prd.md --output ./app/src/main/kotlin
+```
+
+This command:
+1. Runs `enrich-prd` + `brain init` if a brain does not yet exist
+2. Starts `brain serve` (the MCP server)
+3. Prints the exact agent prompt to paste into Claude Code
+
+Paste the printed prompt into Claude Code. The `brain-build-agent` takes over and drives the full pipeline automatically — see [Brain Build Agent](#brain-build-agent) below.
+
+**Scoped builds:**
+
+```bash
+brain build --output ./app/src/main/kotlin --phase 1
+brain build --output ./app/src/main/kotlin --screen LoginScreen
+brain build --output ./app/src/main/kotlin --resume         # continue after interruption
+brain build --output ./app/src/ --design-system ./app/src/main/kotlin/ui/theme
+```
+
+### Step 6 — Monitor progress
+
+While the build agent runs, it prints a progress block after each screen:
 
 ```
-What screens are defined in the brain?
-→ uses get_all_screens
+[auth] Screen 1/3: LoginScreen
+  Generated : viewmodel, ui_state, repository, scaffold, nav_route
+  Skipped   : datamodel (already done)
+  Coverage  : 94%
+  Bugs      : 0 CLASS_A
+  Status    : COMPLETE
+```
 
-Generate the AuthViewModel for the login screen
-→ uses generate_viewmodel
+And after each feature:
 
-Validate my HomeViewModel against MVVM rules
-→ uses validate_mvvm
+```
+[FEATURE COMPLETE] auth — 3 screens, completeness=97%
+```
 
-Check for race conditions in the generated repository
-→ uses detect_race_conditions
+When all features are done:
 
-Is the auth feature complete per the PRD?
-→ uses validate_generation
+```
+╔══════════════════════════════════════╗
+║         BUILD COMPLETE               ║
+╠══════════════════════════════════════╣
+║ Features:      4                     ║
+║ Screens:       12                    ║
+║ Files written: 84                    ║
+║ Avg coverage:  91%                   ║
+║ CLASS_A bugs:  0                     ║
+╚══════════════════════════════════════╝
+```
+
+### Generated File Layout
+
+Given `--output ./app/src/main/kotlin` and package `com.example.app`:
+
+```
+app/src/main/kotlin/com/example/app/
+│
+├── presentation/
+│   └── auth/
+│       ├── LoginScreen.kt          (scaffold)
+│       ├── LoginViewModel.kt
+│       └── LoginUiState.kt
+│
+├── domain/
+│   ├── repository/
+│   │   └── AuthRepository.kt       (interface)
+│   ├── usecase/
+│   │   └── LoginUseCase.kt
+│   └── model/
+│       └── User.kt
+│
+├── data/
+│   └── repository/
+│       └── AuthRepositoryImpl.kt
+│
+├── navigation/
+│   └── LoginNavRoute.kt
+│
+└── di/
+    └── AuthModule.kt
+
+app/src/test/kotlin/com/example/app/
+└── presentation/auth/
+    └── LoginViewModelTest.kt
 ```
 
 ---
 
 ## Setup with Gemini CLI
 
-Gemini CLI supports MCP servers through its `settings.json` configuration.
-
-### Step 1 — Install Gemini CLI
-
 ```bash
 npm install -g @google/gemini-cli
 gemini auth login
 ```
-
-### Step 2 — Register the MCP server
 
 Add to `~/.gemini/settings.json`:
 
@@ -172,14 +287,7 @@ Add to `~/.gemini/settings.json`:
 }
 ```
 
-### Step 3 — Generate your brain (same as Claude Code)
-
-```bash
-brain enrich-prd ./my_prd.md --output ./enriched_prd.md
-brain init --from-prd ./enriched_prd.md
-```
-
-### Step 4 — Use it in Gemini CLI
+Then use it normally:
 
 ```bash
 gemini
@@ -200,7 +308,6 @@ ollama pull llama3.2
 # Brain Engine detects Ollama automatically
 brain doctor      # should show OllamaCLIAdapter
 
-# Run the full workflow
 brain enrich-prd ./my_prd.md --output ./enriched_prd.md
 brain init --from-prd ./enriched_prd.md
 brain serve
@@ -208,87 +315,96 @@ brain serve
 
 ---
 
-## Full Workflow (step by step)
+## Incremental Builds (large PRDs)
 
-### 1. Start with a sparse PRD
-
-You don't need a perfect PRD. Even rough notes work:
+For large PRDs (10+ features), use the incremental enrichment pipeline to avoid losing progress on timeout or crash:
 
 ```bash
-brain enrich-prd ./rough_notes.md --output ./enriched_prd.md
+# Enrich one feature at a time
+brain enrich-feature auth --prd ./enriched_prd.md
+brain enrich-feature payments --prd ./enriched_prd.md
+
+# Or enrich an entire phase
+brain enrich-phase core --prd ./enriched_prd.md
+
+# Resume after any interruption
+brain resume --prd ./enriched_prd.md
 ```
 
-The LLM (using whatever tool is installed) will:
-- Fill every ViewModel function signature with `state_updates`, `events_fired`, and `concurrent` fields
-- Add typed state fields and event specs
-- Infer repository method signatures with `Result<T>` wrapping
-- Apply 20 enterprise Android patterns (Channel events, Mutex guards, `@Keep`, `@Immutable`, etc.)
-- Mark inferences as `[INFERRED]` and unknowns as `[UNKNOWN — please specify]`
+After enriching, `brain/cache/aggregated_brain.json` is rebuilt automatically and used as the `BRAIN_PATH` for `brain serve`.
 
-Use `--interactive` to answer gap questions in the terminal:
+---
 
-```bash
-brain enrich-prd ./rough_notes.md --output ./enriched_prd.md --interactive
-```
+## Troubleshooting
 
-### 2. Review the enriched PRD
+### `Brain Engine MCP server is not connected`
 
-Open `enriched_prd.md` and search for `[UNKNOWN]` — these are fields the LLM could not infer. Fill them before continuing.
-
-### 3. Validate and generate the brain
+The `brain serve` process is not running. Start it in a terminal:
 
 ```bash
-brain validate-prd ./enriched_prd.md   # must score ≥ 80
-brain init --from-prd ./enriched_prd.md --output PROJECT_BRAIN.json
-brain status                            # summary of what was parsed
-```
-
-### 4. Start the MCP server
-
-```bash
+cd /path/to/your/android/project
 brain serve
 ```
 
-This runs forever in the terminal and waits for tool calls from Claude Code or Gemini CLI. Keep it running while you work.
+Or use `brain build` — it starts the server automatically.
 
-### 5. Generate code — automated or manual
+### `brain: command not found`
 
-**Option A (recommended): let the brain-build-agent do it**
-
-```bash
-# brain build already started the MCP server in step 4.
-# In your Claude Code session, type:
-Use the brain-build-agent to build my project to ./app/src/main/kotlin
-```
-
-The agent drives the full generation loop automatically — see [Brain Build Agent](#brain-build-agent) below.
-
-**Option B: call tools manually from your LLM session**
-
-```
-generate_viewmodel("login")
-generate_repository("auth")       # writes AuthRepository.kt + AuthRepositoryImpl.kt
-generate_screen_scaffold("login")
-generate_di_module("auth")
-generate_viewmodel_test("login")
-```
-
-Generated files are:
-- Validated against MVVM rules and auto-fixed
-- Smoke-checked by `kotlinc` if installed
-- Backed up before overwriting
-- Logged to `generation_history` in the brain
-
-Each result includes `spec_coverage` (fraction of non-TODO function bodies) and `bug_warnings` (CLASS_A forecasts).
-
-### 6. Validate and check for bugs
+The package is not installed or the pip scripts directory is not on your PATH.
 
 ```bash
-# From your LLM session, or directly:
-validate_generation(feature_id="auth")     # brain + roadmap + PRD check
-forecast_bugs("LoginScreen")               # 5-detector bug forecast
-audit_production_readiness(1)              # full phase pre-launch report
-sync_brain                                 # detect drift from brain spec
+pip install -e ".[dev]"
+where brain     # Windows
+which brain     # macOS/Linux
+```
+
+### `Brain audit FAILED` before generation
+
+The brain has structural issues. Common causes:
+
+| Issue | Fix |
+|---|---|
+| `broken_reference: Screen 'X' → ViewModel 'Y' not found` | Add a ViewModel with `id: Y` to your brain, or fix the screen's `viewmodel` field |
+| `missing_screen: Feature 'X' references screen 'Y' not in brain.screens` | Add the screen to `brain.screens`, or remove it from the feature |
+| `circular_dependency` | Fix the navigation graph so no route loops back to itself |
+
+Run `audit_brain()` directly in Claude Code to see the full issue list with scores.
+
+### `PRD score too low (< 80)`
+
+Run `brain validate-prd ./enriched_prd.md` — it prints a per-dimension breakdown. The most commonly missing sections are Firestore schema, state machines, and business rules. Use `brain enrich-prd` to fill them automatically.
+
+### `/mcp` shows `brain-engine` but only 35 tools
+
+The server started before `PROJECT_BRAIN.json` existed, or `BRAIN_PATH` points to a stale path. Verify with `brain status`, then restart the server.
+
+---
+
+## Full Workflow Reference
+
+```bash
+# 1. Enrich sparse notes into a hyperspec
+brain enrich-prd ./rough_notes.md --output ./enriched_prd.md
+
+# 2. Validate (must score ≥ 80)
+brain validate-prd ./enriched_prd.md
+
+# 3. Generate brain + ROADMAP.md
+brain init --from-prd ./enriched_prd.md --output PROJECT_BRAIN.json
+brain status
+
+# 4. Run full autonomous build
+brain build --output ./app/src/main/kotlin
+# → paste the printed prompt into Claude Code
+
+# 5. Useful day-to-day commands
+brain roadmap               # print current ROADMAP.md
+brain roadmap --update      # regenerate ROADMAP.md from brain
+brain review                # list low-confidence NEEDS_REVIEW items
+brain review --clear-review # resolve all review items
+brain rollback <file>       # restore last .brain_backup_* for a generated file
+brain sync                  # detect drift between generated files and brain spec
+brain doctor                # confirm active LLM adapter
 ```
 
 ---
@@ -304,10 +420,13 @@ sync_brain                                 # detect drift from brain spec
 | `brain status [--brain-path FILE]` | Print brain summary |
 | `brain review [--clear-review]` | List or resolve low-confidence `NEEDS_REVIEW` items |
 | `brain serve` | Start the stdio MCP server |
-| `brain build --output <dir> [--prd FILE] [--phase N] [--screen ID] [--design-system DIR]` | Enrich + init + serve; print agent invocation instructions |
+| `brain build --output <dir> [--prd FILE] [--phase N] [--screen ID] [--resume] [--design-system DIR]` | Enrich + init + serve; print agent invocation instructions |
 | `brain rollback <file>` | Restore the last `.brain_backup_*` for a generated file |
 | `brain roadmap [--update] [--feature <id>]` | Print or regenerate ROADMAP.md; filter to one feature |
 | `brain doctor` | Show active LLM adapter, installed CLI tools, API key status |
+| `brain enrich-feature <id> --prd <file>` | Incremental: enrich a single feature |
+| `brain enrich-phase <name> --prd <file>` | Incremental: enrich all features in a named phase |
+| `brain resume --prd <file>` | Incremental: continue from last checkpoint |
 
 ---
 
@@ -315,63 +434,52 @@ sync_brain                                 # detect drift from brain spec
 
 `brain build` is the one-command entry point for autonomous project generation. It prepares the brain, starts the MCP server, and tells you exactly what to type in Claude Code to launch the build agent.
 
-### Quickstart
-
-```bash
-# From a sparse PRD (auto-enriches and inits the brain):
-brain build --prd ./rough_notes.md --output ./app/src/main/kotlin
-
-# From an existing brain:
-brain build --output ./app/src/main/kotlin
-
-# Limit scope:
-brain build --output ./app/src/ --phase 1
-brain build --output ./app/src/ --screen login --resume
-
-# With UI design pass (fills Compose screen content from your design system):
-brain build --output ./app/src/ --design-system ./app/src/main/kotlin/ui/theme
-```
-
-After the server starts, the terminal prints the agent prompt. Paste it into Claude Code.
-
 ### How the Agent Loop Works
 
-The `brain-build-agent` Claude Code sub-agent drives a 13-step loop until the entire project is built:
+The `brain-build-agent` Claude Code sub-agent drives a pipeline until the entire project is built:
 
 ```
-1.  get_session_context()           → resume from last session
-2.  get_next_task()                 → next screen, feature, reason
-3.  get_screen_graph() +            → full spec (cached for reuse)
-    get_dependencies() +
-    get_phase_status()
-4.  Classify task                   → SCREEN | DATA | DOMAIN | NAVIGATION | INFRA | TESTING
-5.  Build dependency list           → only items where ComponentStatus flag = False
-6.  Generate missing artifacts      → tools called in dependency order (datamodel →
-                                       repository → usecase → ui_state → viewmodel →
-                                       scaffold → nav_route → di_module → tests)
-6c. UI design pass (conditional)    → ui-agent fills scaffold content from design system
-7.  Logic fill pass (conditional)   → Claude fills TODO stubs when spec_coverage < 1.0
-                                       AND used_llm == False
-8.  Compile gate                    → reads result.compile_ok (non-blocking)
-9.  validate_generation()           → gate on ≥ 90% completeness; retry if below
-10. validate_phase()                → CLASS_A/B violations (report only)
-11. forecast_bugs()                 → 5 zero-LLM detectors (advisory)
-12. sync_brain()                    → drift detection
-13. Roadmap update                  → automatic via write_result()
-    └─ loop back to step 2 until get_next_task() returns done=True
-→ audit_production_readiness()      → final pre-launch report
+Pre-flight
+  get_session_context()       → resume from last session
+  audit_brain()               → integrity gate (score ≥ 60, no broken refs)
+                                 FAIL → print report, stop
+                                 PASS → enter loop
+
+13-step generation loop (repeats per screen until get_next_task() returns done=True):
+  1.  get_session_context()          → check overall progress
+  2.  get_next_task()                → next screen, feature, reason
+  3.  get_screen_graph() +           → full spec (cached for reuse)
+      get_dependencies() +
+      get_phase_status()
+  4.  Classify task                  → SCREEN | DATA | DOMAIN | NAVIGATION | INFRA | TESTING
+  5.  Build dependency list          → only items where ComponentStatus flag = False
+  6.  Generate missing artifacts     → dependency order:
+                                        datamodel → repository → usecase → ui_state
+                                        → viewmodel → scaffold → nav_route → di_module → tests
+  6c. UI design pass (conditional)   → ui-agent fills scaffold content from design system
+  7.  Logic fill pass (conditional)  → Claude fills TODO stubs when spec_coverage < 1.0
+                                        AND used_llm == False
+  8.  Compile gate                   → reads result.compile_ok (non-blocking)
+  9.  validate_generation()          → gate on ≥ 90% completeness; retry if below
+  10. validate_phase()               → CLASS_A/B violations (report only)
+  11. forecast_bugs()                → 5 zero-LLM detectors (advisory)
+  12. sync_brain()                   → drift detection
+  13. Roadmap update                 → automatic via write_result()
+      └─ loop back to step 2
+
+Final audit: audit_production_readiness()
 ```
 
 **Feature order is automatic.** The brain schema enforces priority and dependency blocking — `auth` builds before `home`, `home` before `profile`. Feature promotion to `complete` is gated on `validate_generation ≥ 90%`.
 
-**Token-minimal by design.** The deterministic filler covers ~80–90% of ViewModel function bodies with zero LLM calls. Claude only fills gaps when `spec_coverage < 1.0 AND used_llm == False`. ComponentStatus flags prevent any artifact from being generated twice.
+**Token-minimal by design.** The deterministic filler covers ~80–90% of ViewModel function bodies with zero LLM calls. Claude only fills gaps when `spec_coverage < 1.0 AND used_llm == False`. `ComponentStatus` flags prevent any artifact from being generated twice.
 
 ### Agent Files
 
 | File | Purpose |
 |---|---|
-| `.claude/agents/brain-build-agent.md` | Main build agent — full 13-step loop instructions for Claude Code |
-| `.claude/agents/ui-agent.md` | UI design pass (step 6c) — fills scaffold `// TODO: implement screen content` using MaterialTheme tokens from your design system |
+| `.claude/agents/brain-build-agent.md` | Main build agent — full pipeline instructions for Claude Code |
+| `.claude/agents/ui-agent.md` | UI design pass (step 6c) — fills scaffold `// TODO: implement screen content` using MaterialTheme tokens |
 | `prompts/logic_fill_pass.txt` | Logic fill pass prompt — rules for filling TODO stubs in ViewModel and Repository files |
 | `docs/AGENT-LOOP.md` | Full loop reference: dependency table, task classification matrix, token minimisation rules |
 
@@ -385,110 +493,43 @@ These fields are all optional. Omit any you don't need; the generator falls back
 
 ### `ViewModel` — private fields, init block, helpers, computed guards
 
-Add these to any `viewmodels[*]` entry in `PROJECT_BRAIN.json`:
-
 ```jsonc
 {
   "id": "OtpViewModel",
   // ... existing fields ...
 
-  // Mutable fields not injected via constructor
   "private_fields": [
     { "name": "savedVerificationId", "type": "String", "default": "\"\"", "volatile": true }
   ],
-
-  // Lines emitted inside init { }
   "init_lines": [
     "savedStateHandle.get<String>(\"phone\")?.let { _uiState.update { s -> s.copy(phoneNumber = it) } }",
     "startResendCountdown()"
   ],
-
-  // Private helpers stubbed with a self-documenting body_hint comment
   "private_functions": [
     {
       "name": "startResendCountdown",
       "signature": "()",
       "return_type": "Unit",
       "body_hint": "countdown from 60 to 0 with delay(1000), updating resendSecondsRemaining each tick"
-    },
-    {
-      "name": "validateIndianPhoneNumber",
-      "signature": "(phone: String)",
-      "return_type": "Boolean",
-      "body_hint": "phone.length == 10 && phone.first() in '6'..'9'"
     }
   ],
-
-  // Deterministic computed vals — generated as private val with a get() expression, zero LLM
   "computed_properties": [
     {
       "name": "canVerify",
       "type": "Boolean",
       "expression": "_uiState.value.digits.all { it.length == 1 } && !_uiState.value.isVerifying"
-    },
-    {
-      "name": "canResend",
-      "type": "Boolean",
-      "expression": "_uiState.value.resendSecondsRemaining == 0 && !_uiState.value.isResending && !_uiState.value.isVerifying"
     }
   ]
 }
 ```
 
-**What you get:**
-
-```kotlin
-// private_fields
-@Volatile private var savedVerificationId: String = ""
-
-// init_lines
-init {
-    savedStateHandle.get<String>("phone")?.let { _uiState.update { s -> s.copy(phoneNumber = it) } }
-    startResendCountdown()
-}
-
-// computed_properties
-private val canVerify: Boolean get() = _uiState.value.digits.all { it.length == 1 } && !_uiState.value.isVerifying
-
-// private_functions — stubbed with hint comment for the logic fill pass
-private fun startResendCountdown(): Unit {
-    // countdown from 60 to 0 with delay(1000), updating resendSecondsRemaining each tick
-    // TODO: implement
-}
-```
-
 ### `RepositoryMethod` — Firebase pattern stubs
-
-Add `firebase_pattern` to any `repositories[*].methods[*]` entry to replace a bare `// TODO` with a complete, compilable implementation skeleton:
 
 ```jsonc
 {
-  "name": "observeAuthState",
-  "is_flow": true,
-  "flow_type": "AppResult<User?>",
-  "firebase_pattern": "auth_state_listener"   // ← new
-},
-{
   "name": "sendOtp",
   "params": ["phoneNumber: String"],
-  "result_wrapped": true,
-  "result_type": "Unit",
-  "firebase_pattern": "phone_auth"            // ← new
-},
-{
-  "name": "verifyOtp",
-  "params": ["phoneNumber: String", "otp: String"],
-  "result_wrapped": true,
-  "result_type": "User",
-  "firebase_pattern": "credential_sign_in"    // ← new
-},
-{
-  "name": "completeProfileSetup",
-  "params": ["name: String", "email: String"],
-  "result_wrapped": true,
-  "result_type": "User",
-  "firebase_pattern": "firestore_update",
-  "firestore_path": "/users"                  // ← collection name used in stub
+  "firebase_pattern": "phone_auth"
 }
 ```
 
@@ -500,82 +541,44 @@ Add `firebase_pattern` to any `repositories[*].methods[*]` entry to replace a ba
 | `firestore_get` | `runCatching { firestore.collection(…).document(uid).get().await() }` |
 | `firestore_update` | `runCatching { firestore.collection(…).document(uid).update(updates).await() }` |
 
-When `phone_auth` or `credential_sign_in` is present, the generator **automatically**:
-- Injects `@Volatile private var savedVerificationId: String = ""` into the class
-- Adds all required imports (`PhoneAuthProvider`, `PhoneAuthOptions`, `suspendCancellableCoroutine`, etc.)
-
 ### `Screen` — UI component list for zero-TODO scaffolds
-
-Add `ui_components` to any `screens[*]` entry and `generate_screen_scaffold` will render a real `Column` body instead of `// TODO: implement screen content`:
 
 ```jsonc
 {
   "id": "PhoneEntryScreen",
-  // ... existing fields ...
   "ui_components": [
-    {
-      "type": "OutlinedTextField",
-      "bound_to": "phoneNumber",
-      "label": "Mobile number",
-      "prefix": "+91 ",
-      "action": "onPhoneNumberChanged"
-    },
-    {
-      "type": "ErrorText",
-      "error_field": "errorMessage",
-      "retry_action": "retrySendOtp"
-    },
-    {
-      "type": "Button",
-      "label": "Send OTP",
-      "action": "onSendOtpClicked",
-      "enabled_when": "!uiState.isSendingOtp && uiState.phoneNumber.length == 10",
-      "loading_when": "isSendingOtp"
-    },
-    {
-      "type": "OfflineBanner",
-      "bound_to": "isOfflineMode"
-    }
+    { "type": "OutlinedTextField", "bound_to": "phoneNumber", "label": "Mobile number", "prefix": "+91 ", "action": "onPhoneNumberChanged" },
+    { "type": "ErrorText", "error_field": "errorMessage", "retry_action": "retrySendOtp" },
+    { "type": "Button", "label": "Send OTP", "action": "onSendOtpClicked", "enabled_when": "!uiState.isSendingOtp && uiState.phoneNumber.length == 10", "loading_when": "isSendingOtp" },
+    { "type": "OfflineBanner", "bound_to": "isOfflineMode" }
   ]
 }
 ```
 
-Supported `type` values:
-
-| type | Renders |
+| `type` | Renders |
 |---|---|
 | `OutlinedTextField` | Text input with optional `prefix`, wired to `action` |
-| `Button` | Primary button with optional `enabled_when` expression and loading spinner |
+| `Button` | Primary button with optional `enabled_when` and loading spinner |
 | `TextButton` | Flat secondary button |
 | `ErrorText` | Conditional error message with optional "Retry" button |
 | `OtpDigitRow` | Row of `count` (default 6) single-char boxes with auto-focus advance |
-| `TimerText` | Countdown display (`bound_to > 0`) that switches to a "Resend OTP" button at zero |
-| `OfflineBanner` | `errorContainer` Card shown when `bound_to` state field is true |
-
-All components are wrapped in a `Column` with `fillMaxSize` + `padding(24.dp)` + `imePadding()`. The required Compose imports are added automatically.
-
-### Test stubs — correct field names, no manual fixes
-
-`generate_viewmodel_test` now reads `state_fields` from the brain instead of hardcoding field names:
-- **Loading field** — first `Boolean` field whose name contains `loading`, `sending`, `verifying`, `fetching`, etc.
-- **Error field** — first nullable `String` field whose name contains `error`, `message`, or `msg`
-- `Dispatchers.setMain` / `resetMain` always emitted in `@Before` / `@After`
-- `SavedStateHandle` injected into the test constructor when `has_saved_state = true`, pre-populated from `Screen.nav_args`
+| `TimerText` | Countdown display that switches to a "Resend OTP" button at zero |
+| `OfflineBanner` | `errorContainer` Card shown when `bound_to` is true |
 
 ---
 
-## MCP Tool Catalogue (35 tools)
+## MCP Tool Catalogue (39 tools)
 
-### Roadmap & pipeline tools — zero-LLM, call at session start
+### Roadmap & pipeline tools
 
 | Tool | What it returns |
 |---|---|
 | `get_session_context` | Last session + overall progress + current feature + next recommended step |
 | `get_next_task` | Single next generation call with exact args; respects feature priority and dependency blocking |
-| `get_feature_status(feature_id)` | Component-level status table for every screen in a feature |
-| `get_project_roadmap` | Full feature → screen → component status tree for the entire project |
+| `get_feature_status(feature_id)` | Component-level status for every screen in a feature |
+| `get_project_roadmap` | Full feature → screen → component status tree |
 
-### Read tools — zero-LLM, instant
+### Read tools
 
 | Tool | What it returns |
 |---|---|
@@ -590,10 +593,11 @@ All components are wrapped in a `Column` with `fillMaxSize` + `padding(24.dp)` +
 | `get_design_tokens` | Design system values and token rules |
 | `get_navigation_graph` | Full navigation graph |
 
-### Validation tools — deterministic, no LLM
+### Validation tools
 
 | Tool | What it checks |
 |---|---|
+| `audit_brain` | Pre-generation integrity gate: reference integrity, circular nav deps, feature completeness, business rule coverage. Returns `{status, score, critical_issues, warnings, generation_allowed}`. All generation tools refuse when `generation_allowed=false`. |
 | `validate_mvvm(file_path)` | CLASS_A/B/C MVVM rule violations in a Kotlin file |
 | `validate_phase(phase)` | All phase files from the brain |
 | `validate_firestore_consistency` | Brain Firestore rules vs. declarations |
@@ -602,36 +606,39 @@ All components are wrapped in a `Column` with `fillMaxSize` + `padding(24.dp)` +
 | `validate_naming_conventions(file_path)` | Kotlin naming convention violations |
 | `validate_generation(feature_id?, phase?)` | Three-column per-screen verdict: `brain_match` / `roadmap_match` / `prd_match` with `completeness_pct` |
 
-### Generation tools — LLM-assisted, deterministic pre-pass covers ~80 % of bodies
+### Generation tools
 
 All generation tools: validate output → auto-fix CLASS_A violations → retry (×3) → write with `.brain_backup_*` → compile-check → bug forecast → log to `generation_history`.
 
 | Tool | What it generates |
 |---|---|
-| `generate_viewmodel(screen_id)` | `@HiltViewModel` + `StateFlow` + `Channel<Event>`; deterministic filler fills 80–90 % of function bodies without LLM. v3: emits `private_fields`, `init {}`, `computed_properties`, and `private_functions` sections from brain spec. |
+| `generate_viewmodel(screen_id)` | `@HiltViewModel` + `StateFlow` + `Channel<Event>`; deterministic filler covers 80–90 % of function bodies. v3: emits `private_fields`, `init {}`, `computed_properties`, and `private_functions` from brain spec. |
 | `generate_ui_state(screen_id)` | `@Immutable data class` UiState (v2) or sealed class (v1) |
-| `generate_repository(repository_id)` | Interface `.kt` + `Impl.kt` as two separate files. v3: uses `firebase_pattern` to emit real Firebase boilerplate; auto-injects `savedVerificationId` and required imports. |
+| `generate_repository(repository_id)` | Interface `.kt` + `Impl.kt` as two files. v3: uses `firebase_pattern` for real Firebase boilerplate. |
 | `generate_datamodel(model_id)` | `@Keep` data class with `@PropertyName` for Firestore |
-| `generate_screen_scaffold(screen_id)` | `@Composable` + `collectAsStateWithLifecycle` + Content composable split. v3: renders a real `Column` UI body from `Screen.ui_components` — no `// TODO` stub when the component list is populated. |
+| `generate_screen_scaffold(screen_id)` | `@Composable` + `collectAsStateWithLifecycle`. v3: renders a real `Column` UI body from `Screen.ui_components` — no TODO stub when the list is populated. |
 | `generate_usecase(usecase_name)` | Single-function `UseCase` with `invoke()` |
 | `generate_di_module(feature_name)` | Hilt `@Module @Binds` for feature repositories |
-| `generate_nav_route(screen_id)` | v2: route object + `NavController.navigateTo{Screen}()` extension + `NavGraphBuilder.{screen}Screen()` composable builder |
-| `generate_viewmodel_test(screen_id)` | mockk + `StandardTestDispatcher` + `runTest` scaffold. v3: derives correct `state_fields` names for assertions; emits `Dispatchers.setMain/resetMain`; injects `SavedStateHandle` when `has_saved_state = true`. |
+| `generate_nav_route(screen_id)` | Route object + `NavController` extension + `NavGraphBuilder` composable builder |
+| `generate_viewmodel_test(screen_id)` | mockk + `StandardTestDispatcher` + `runTest` scaffold with correct state field names from brain spec |
 
-### Bug forecasting tools — zero-LLM, Phase 5
+### Bug forecasting tools
 
 | Tool | What it detects |
 |---|---|
 | `forecast_bugs(screen_id)` | All 5 detectors for one screen; returns prioritised CLASS_A/B list |
-| `detect_race_conditions()` | Read-then-write Firestore patterns without transactions across all generated files |
-| `detect_orphaned_documents()` | `consistency_link` violations that produce orphaned Firestore documents |
+| `detect_race_conditions()` | Read-then-write Firestore patterns without transactions |
+| `detect_orphaned_documents()` | `consistency_link` violations that produce orphaned documents |
 | `audit_production_readiness(phase)` | Full pre-launch bug audit for a phase |
 
-### Sync tool — zero-LLM, Phase 6
+### Sync & incremental tools
 
 | Tool | What it does |
 |---|---|
-| `sync_brain` | Re-scans all previously generated files; adds drift items to `brain.known_violations` |
+| `sync_brain` | Re-scans all generated files; adds drift items to `brain.known_violations` |
+| `get_enrichment_status` | Session status: completed / pending / failed features and last checkpoint |
+| `get_feature_artifacts(feature_id)` | All artifacts for one enriched feature from `brain/features/{id}/` |
+| `aggregate_brain` | Rebuild `brain/cache/aggregated_brain.json` from all feature artifact files |
 
 ---
 
@@ -661,12 +668,12 @@ Copy `.env.example` → `.env` to set these permanently.
 ## Running Tests
 
 ```bash
-pytest              # 150 tests
-pytest tests/test_new_phases.py -v     # Phase 4–6 coverage (20 tests)
-pytest tests/test_cli_adapter.py -v    # CLI adapter detection
-pytest tests/test_prd_enricher.py -v   # enrichment engine
-pytest tests/test_schema.py -v         # Pydantic schema
-pytest tests/test_generation_tools.py -v  # Phase 4 generation + registry
+pytest                                     # 203 tests
+pytest tests/test_new_phases.py -v         # Phase 4–6 coverage
+pytest tests/test_cli_adapter.py -v        # CLI adapter detection
+pytest tests/test_prd_enricher.py -v       # enrichment engine
+pytest tests/test_schema.py -v             # Pydantic schema
+pytest tests/test_generation_tools.py -v   # Phase 4 generation + registry
 ```
 
 ---
@@ -684,4 +691,5 @@ pytest tests/test_generation_tools.py -v  # Phase 4 generation + registry
 | 4 | Code generation: v1+v2 templates, DeterministicFunctionBodyGenerator, self-healing orchestrator, CompileVerifier, 9 generation tools | **Complete** |
 | 5 | Predictive bug engine: 5 zero-LLM detectors, 4 MCP tools | **Complete** |
 | 6 | Self-healing sync: StateTransitionEngine, sync_brain MCP tool | **Complete** |
+| 7 | Brain audit pre-generation gate: audit_brain, 39 MCP tools total | **Complete** |
 | v3 | Brain spec enrichment fields: `private_fields`, `init_lines`, `private_functions`, `computed_properties`, `firebase_pattern`, `ui_components` | **Complete** |
