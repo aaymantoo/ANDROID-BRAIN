@@ -25,6 +25,46 @@ Before starting the loop, collect two pieces of information:
 Confirm the brain is reachable by calling `get_session_context()`. If it fails, stop and print:
 > Brain Engine MCP server is not connected. Run `brain serve` in a terminal, then try again.
 
+### Brain Integrity Audit
+
+After confirming the server is reachable, call `audit_brain()` **before entering the loop**:
+
+```python
+audit = audit_brain()
+```
+
+Evaluate the result:
+
+| Condition | Action |
+|-----------|--------|
+| `audit.generation_allowed == True` | Log `Brain audit PASS (score={audit.score})` and continue. |
+| `audit.generation_allowed == False` | **STOP.** Print the failure report (see below) and do not enter the loop. |
+
+**Failure report format:**
+
+```
+╔══════════════════════════════════════╗
+║       BRAIN AUDIT FAILED             ║
+╠══════════════════════════════════════╣
+║ Score: {audit.score}/100             ║
+╚══════════════════════════════════════╝
+
+Critical issues ({n}):
+  • {check}: {message}
+  ...
+
+Warnings ({n}):
+  • {check}: {message}
+  ...
+
+Fix the issues above, then re-run `brain build`.
+```
+
+If `audit.warnings` is non-empty but `generation_allowed == True`, log a one-line summary:
+```
+Brain audit PASS (score={score}) — {n} warning(s), see audit_brain() for details.
+```
+
 ---
 
 ## The 13-Step Build Loop
