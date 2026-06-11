@@ -23,6 +23,23 @@ PROJECT_BRAIN.json                ← single source of truth
 Claude Code / Gemini CLI          ← queries, generates, validates, and forecasts bugs
 ```
 
+**Or use `brain build` to run the full pipeline in one command:**
+
+```
+brain build --prd ./rough.md --output ./app/src/main/kotlin
+     │
+     ├─ enrich-prd  →  brain init  →  brain serve (auto)
+     │
+     └─▶  brain-build-agent (Claude Code sub-agent)
+              │
+              ├─ 13-step loop: get_next_task → generate → validate → forecast → sync
+              ├─ Dependency order enforced: datamodel → repository → usecase → ui_state
+              │  → viewmodel → scaffold → nav_route → di_module → tests
+              ├─ Logic fill pass: Claude fills TODO stubs when deterministic filler < 100%
+              └─ UI design pass: ui-agent fills scaffold content from design system files
+Generated .kt files (validated, spec-covered, bug-forecast)
+```
+
 ---
 
 ## Compatibility
@@ -234,9 +251,19 @@ brain serve
 
 This runs forever in the terminal and waits for tool calls from Claude Code or Gemini CLI. Keep it running while you work.
 
-### 5. Generate code via MCP tools
+### 5. Generate code — automated or manual
 
-From your LLM tool session:
+**Option A (recommended): let the brain-build-agent do it**
+
+```bash
+# brain build already started the MCP server in step 4.
+# In your Claude Code session, type:
+Use the brain-build-agent to build my project to ./app/src/main/kotlin
+```
+
+The agent drives the full generation loop automatically — see [Brain Build Agent](#brain-build-agent) below.
+
+**Option B: call tools manually from your LLM session**
 
 ```
 generate_viewmodel("login")
@@ -277,9 +304,76 @@ sync_brain                                 # detect drift from brain spec
 | `brain status [--brain-path FILE]` | Print brain summary |
 | `brain review [--clear-review]` | List or resolve low-confidence `NEEDS_REVIEW` items |
 | `brain serve` | Start the stdio MCP server |
+| `brain build --output <dir> [--prd FILE] [--phase N] [--screen ID] [--design-system DIR]` | Enrich + init + serve; print agent invocation instructions |
 | `brain rollback <file>` | Restore the last `.brain_backup_*` for a generated file |
 | `brain roadmap [--update] [--feature <id>]` | Print or regenerate ROADMAP.md; filter to one feature |
 | `brain doctor` | Show active LLM adapter, installed CLI tools, API key status |
+
+---
+
+## Brain Build Agent
+
+`brain build` is the one-command entry point for autonomous project generation. It prepares the brain, starts the MCP server, and tells you exactly what to type in Claude Code to launch the build agent.
+
+### Quickstart
+
+```bash
+# From a sparse PRD (auto-enriches and inits the brain):
+brain build --prd ./rough_notes.md --output ./app/src/main/kotlin
+
+# From an existing brain:
+brain build --output ./app/src/main/kotlin
+
+# Limit scope:
+brain build --output ./app/src/ --phase 1
+brain build --output ./app/src/ --screen login --resume
+
+# With UI design pass (fills Compose screen content from your design system):
+brain build --output ./app/src/ --design-system ./app/src/main/kotlin/ui/theme
+```
+
+After the server starts, the terminal prints the agent prompt. Paste it into Claude Code.
+
+### How the Agent Loop Works
+
+The `brain-build-agent` Claude Code sub-agent drives a 13-step loop until the entire project is built:
+
+```
+1.  get_session_context()           → resume from last session
+2.  get_next_task()                 → next screen, feature, reason
+3.  get_screen_graph() +            → full spec (cached for reuse)
+    get_dependencies() +
+    get_phase_status()
+4.  Classify task                   → SCREEN | DATA | DOMAIN | NAVIGATION | INFRA | TESTING
+5.  Build dependency list           → only items where ComponentStatus flag = False
+6.  Generate missing artifacts      → tools called in dependency order (datamodel →
+                                       repository → usecase → ui_state → viewmodel →
+                                       scaffold → nav_route → di_module → tests)
+6c. UI design pass (conditional)    → ui-agent fills scaffold content from design system
+7.  Logic fill pass (conditional)   → Claude fills TODO stubs when spec_coverage < 1.0
+                                       AND used_llm == False
+8.  Compile gate                    → reads result.compile_ok (non-blocking)
+9.  validate_generation()           → gate on ≥ 90% completeness; retry if below
+10. validate_phase()                → CLASS_A/B violations (report only)
+11. forecast_bugs()                 → 5 zero-LLM detectors (advisory)
+12. sync_brain()                    → drift detection
+13. Roadmap update                  → automatic via write_result()
+    └─ loop back to step 2 until get_next_task() returns done=True
+→ audit_production_readiness()      → final pre-launch report
+```
+
+**Feature order is automatic.** The brain schema enforces priority and dependency blocking — `auth` builds before `home`, `home` before `profile`. Feature promotion to `complete` is gated on `validate_generation ≥ 90%`.
+
+**Token-minimal by design.** The deterministic filler covers ~80–90% of ViewModel function bodies with zero LLM calls. Claude only fills gaps when `spec_coverage < 1.0 AND used_llm == False`. ComponentStatus flags prevent any artifact from being generated twice.
+
+### Agent Files
+
+| File | Purpose |
+|---|---|
+| `.claude/agents/brain-build-agent.md` | Main build agent — full 13-step loop instructions for Claude Code |
+| `.claude/agents/ui-agent.md` | UI design pass (step 6c) — fills scaffold `// TODO: implement screen content` using MaterialTheme tokens from your design system |
+| `prompts/logic_fill_pass.txt` | Logic fill pass prompt — rules for filling TODO stubs in ViewModel and Repository files |
+| `docs/AGENT-LOOP.md` | Full loop reference: dependency table, task classification matrix, token minimisation rules |
 
 ---
 
