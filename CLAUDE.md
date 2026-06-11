@@ -136,7 +136,7 @@ brain serve ──► server.py ──► ToolRegistry(brain) ──► MCP tool
 
 | Path | Role |
 |---|---|
-| `project_brain/brain/schema.py` | The canonical Pydantic schema for `PROJECT_BRAIN.json`. All data shapes are defined here — `ProjectBrain`, `Screen`, `ViewModel`, `Repository`, `StateMachine`, `BusinessRule`, etc. `StrictModel` (base) rejects unknown fields. |
+| `project_brain/brain/schema.py` | The canonical Pydantic schema for `PROJECT_BRAIN.json`. All data shapes are defined here — `ProjectBrain`, `Screen`, `ViewModel`, `Repository`, `StateMachine`, `BusinessRule`, etc. `StrictModel` (base) rejects unknown fields. See **v3 brain spec** section below for the new enrichment fields. |
 | `project_brain/brain/manager.py` | `BrainManager` — reads and atomic-writes `PROJECT_BRAIN.json` via a temp file + `os.replace`. |
 | `project_brain/brain/validator.py` | Validates a raw JSON payload against the schema; raises `BrainValidationError`. |
 | `project_brain/generators/prd_parser.py` | Heuristic markdown parser that turns a PRD file into a `ProjectBrain`. Requires PRD score ≥ 80; raises `IncompletePRDError` otherwise. |
@@ -167,7 +167,7 @@ brain serve ──► server.py ──► ToolRegistry(brain) ──► MCP tool
 | `project_brain/llm/cli_adapter.py` | `CLIAdapter` ABC + `ClaudeCodeCLIAdapter`, `GeminiCLIAdapter`, `LLMCLIAdapter`, `OllamaCLIAdapter`. Subprocess-based, stdin pipe, no shell injection risk. `fill_functions()` runs `DeterministicFunctionBodyGenerator` first — only spawns a subprocess if confidence < 0.75. |
 | `project_brain/llm/claude.py` | Direct Anthropic API adapter (fallback when no CLI tool is found). |
 | `project_brain/llm/openai.py` | Direct OpenAI API adapter (fallback). |
-| `project_brain/engines/template_engine.py` | `TemplateEngine` (v1) and `TemplateEngineV2` (enterprise). `_resolve_domain_imports()` maps `AppResult`/`User` return types to `domain.util`/`domain.model` import paths. |
+| `project_brain/engines/template_engine.py` | `TemplateEngine` (v1) and `TemplateEngineV2` (enterprise). `_resolve_domain_imports()` maps `AppResult`/`User` return types to `domain.util`/`domain.model` import paths. v3: `_render_ui_components()` converts `Screen.ui_components` → pre-rendered Kotlin Column body; `_build_result_stub()` emits Firebase-pattern boilerplate from `RepositoryMethod.firebase_pattern`; `_find_loading_state_field()` / `_find_error_state_field()` derive correct field names for test stubs. |
 | `project_brain/generators/code_generation.py` | `GenerationOrchestrator` — template render → LLM fill → MVVM validate → auto-fix CLASS_A → retry (×3). `write_result()` runs `CompileVerifier` (kotlinc smoke-check), calls `BugEngine.forecast()` for ViewModel/Repository files, and computes `spec_coverage`. `RepositoryPair` + `write_repository_pair()` produce two separate `.kt` files. |
 | `project_brain/tools/generation_tools.py` | `GenerationTools` MCP facade for all 9 generation methods. `generate_repository()` with `output_path` writes two files via `write_repository_pair()`. |
 
@@ -232,6 +232,86 @@ Bug forecasting tools (Phase 5 — all zero-LLM):
 
 Sync tool (Phase 6 — zero-LLM):
 - `sync_brain` — re-scan all previously generated files for drift from brain spec; adds `NEEDS_REVIEW` violations
+
+### v3 brain spec — enrichment fields
+
+These fields were added to close the gap between a brain that generates correct skeletons and one that generates near-complete files. All fields are optional with empty-list defaults — existing `PROJECT_BRAIN.json` files load without migration.
+
+#### `ViewModel` additions
+
+| Field | Type | Purpose |
+|---|---|---|
+| `private_fields` | `list[PrivateField]` | Non-injected mutable fields (`@Volatile var savedVerificationId`, countdown state, etc.). Rendered verbatim above the functions block. |
+| `init_lines` | `list[str]` | Lines emitted inside `init { }`. Use to load `SavedStateHandle` args or start background coroutines. |
+| `private_functions` | `list[PrivateFunction]` | Private helpers (`startResendCountdown`, `validateEmail`, etc.). Each has a `body_hint` comment so the stub is self-documenting and the LLM fill pass has context. |
+| `computed_properties` | `list[ComputedProperty]` | Deterministic `private val` expressions (`canVerify`, `canResend`). Generated as `get()` properties — no LLM needed. |
+
+**`PrivateField`** — `name`, `type`, `default` (Kotlin literal), `volatile: bool`
+
+**`PrivateFunction`** — `name`, `signature` (e.g. `"(email: String)"`), `return_type`, `body_hint` (one-liner describing what it does)
+
+**`ComputedProperty`** — `name`, `type`, `expression` (Kotlin expression referencing `_uiState.value.*`)
+
+#### `RepositoryMethod` additions
+
+| Field | Type | Purpose |
+|---|---|---|
+| `firebase_pattern` | `str \| None` | Selects a pre-written boilerplate stub instead of a bare `// TODO`. See values below. |
+
+**`firebase_pattern` values** — each emits a complete, compilable implementation body:
+
+| Value | Emits |
+|---|---|
+| `auth_state_listener` | `callbackFlow { firebaseAuth.addAuthStateListener { ... }; awaitClose { ... } }` |
+| `phone_auth` | `suspendCancellableCoroutine` + `PhoneAuthProvider.OnVerificationStateChangedCallbacks` with `onCodeSent` storing `savedVerificationId` |
+| `credential_sign_in` | `PhoneAuthProvider.getCredential(savedVerificationId, otp)` → `signInWithCredential` → Firestore fetch |
+| `firestore_get` | `runCatching { firestore.collection(...).document(uid).get().await() }` |
+| `firestore_update` | `runCatching { firestore.collection(...).document(uid).update(updates).await() }` |
+
+When any method has `firebase_pattern = "phone_auth"` or `"credential_sign_in"`, the repository impl context **automatically**:
+- Injects `@Volatile private var savedVerificationId: String = ""` into the class body
+- Adds all required imports (`PhoneAuthProvider`, `PhoneAuthOptions`, `suspendCancellableCoroutine`, etc.)
+
+#### `Screen` additions
+
+| Field | Type | Purpose |
+|---|---|---|
+| `ui_components` | `list[UiComponent]` | Ordered list of widgets. `screen_scaffold_context()` pre-renders these into a complete Kotlin `Column` body — no `// TODO: implement screen content` stub when this list is non-empty. |
+
+**`UiComponent`** fields:
+
+| Field | Used by |
+|---|---|
+| `type` | Component kind — see table below |
+| `bound_to` | State field name for `value =` / conditional display |
+| `label` | Display text for buttons, text fields, offline banners |
+| `prefix` | Inline prefix text (e.g. `"+91 "` for phone fields) |
+| `enabled_when` | Kotlin expression for `enabled =` on buttons |
+| `action` | ViewModel function name for `onClick` / `onValueChange` |
+| `loading_when` | Boolean state field — renders `CircularProgressIndicator` inside buttons |
+| `error_field` | State field name for `ErrorText` conditional block |
+| `retry_action` | Function name wired to the "Retry" `TextButton` inside `ErrorText` |
+| `count` | Number of digit boxes for `OtpDigitRow` (default 6) |
+
+**`type` values** and what they render:
+
+| type | Renders |
+|---|---|
+| `OutlinedTextField` | `OutlinedTextField` with `value`, `onValueChange`, optional `prefix` |
+| `Button` | `Button` with optional `enabled` expression and loading spinner |
+| `TextButton` | Flat `TextButton` |
+| `ErrorText` | `uiState.{error_field}?.let { msg -> Text(...) [+ TextButton("Retry")] }` |
+| `OtpDigitRow` | `Row` of `{count}` single-char `OutlinedTextField` boxes with auto-focus advance |
+| `TimerText` | Countdown display when `bound_to > 0`, otherwise a "Resend OTP" `TextButton` |
+| `OfflineBanner` | `Card` with `errorContainer` colour, shown when `bound_to` is true |
+
+#### Test stub improvements (v3)
+
+`generate_viewmodel_test` now reads `state_fields` from the brain to derive correct assertion field names:
+- **`loading_field`** — first `Boolean` field whose name contains `loading`, `sending`, `verifying`, `fetching`, etc. Replaces the previous hardcoded `state.isLoading`.
+- **`error_field`** — first nullable `String` field whose name contains `error`, `message`, or `msg`. Replaces the previous hardcoded `state.error`.
+- **`Dispatchers.setMain` / `resetMain`** — always emitted in `setUp` / `tearDown`.
+- **`SavedStateHandle`** — injected into the ViewModel constructor when `has_saved_state = true`, pre-populated from `Screen.nav_args`.
 
 ### PRD requirements
 
