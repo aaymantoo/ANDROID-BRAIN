@@ -75,7 +75,13 @@ class KotlinAnalysis:
         repository_classes = [name.removesuffix("Impl") for name in self.classes if "Repository" in name]
         if not repository_classes:
             return True
-        return any(name in self.interfaces or f"I{name}" in self.interfaces for name in repository_classes)
+        for name in repository_classes:
+            # Interface declared in this file, or class implements it via `: InterfaceName {`
+            if name in self.interfaces or f"I{name}" in self.interfaces:
+                return True
+            if re.search(rf":\s*I?{re.escape(name)}\s*[{{,]", self.content):
+                return True
+        return False
 
     def has_direct_firestore_call(self) -> bool:
         return bool(re.search(r"\.collection\s*\(", self.content))

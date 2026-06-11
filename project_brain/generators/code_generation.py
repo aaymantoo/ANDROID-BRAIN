@@ -302,6 +302,8 @@ class GenerationOrchestrator:
                         state_updates=list(getattr(f, "state_updates", None) or []),
                         events_fired=list(getattr(f, "events_fired", None) or []),
                         concurrent=bool(getattr(f, "concurrent", False)),
+                        is_override=is_repo_impl,
+                        is_suspend=is_repo_impl and not getattr(f, "is_flow", False),
                     )
                     for f in functions_spec
                 ]

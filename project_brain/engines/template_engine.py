@@ -169,15 +169,23 @@ class TemplateEngine:
     def usecase_context(self, brain: ProjectBrain, usecase_name: str) -> dict[str, Any]:
         pkg = brain.meta.package_name or "com.example.app"
         repo_type = _infer_usecase_repository(brain, usecase_name)
-        invoke_sig = f"suspend operator fun invoke(): Any?"
-        if "Get" in usecase_name or "Fetch" in usecase_name:
-            param = _snake(usecase_name.replace("Get", "").replace("UseCase", "").replace("Fetch", ""))
-            invoke_sig = f"suspend operator fun invoke({param}Id: String): Any?"
+        method = _infer_usecase_method(brain, usecase_name)
+        repo_var = "repository"  # matches the constructor param name in the usecase template
+        if method:
+            params_sig = ", ".join(method.params or [])
+            param_names = [p.split(":")[0].strip() for p in (method.params or [])]
+            ret = _repo_method_return(method)
+            invoke_sig = f"suspend operator fun invoke({params_sig}): {ret}"
+            delegation_call = f"{repo_var}.{method.name}({', '.join(param_names)})"
+        else:
+            invoke_sig = "suspend operator fun invoke(): Any?"
+            delegation_call = f'TODO("implement {usecase_name}")'
         return {
             "package_name": pkg,
             "usecase_name": usecase_name,
             "repository_type": repo_type,
             "invoke_signature": invoke_sig,
+            "delegation_call": delegation_call,
         }
 
     def di_module_context(self, brain: ProjectBrain, feature_name: str) -> dict[str, Any]:
@@ -313,6 +321,26 @@ def _infer_usecase_repository(brain: ProjectBrain, usecase_name: str) -> str:
             if vm.repository:
                 return vm.repository
     return "Repository"
+
+
+def _infer_usecase_method(brain: ProjectBrain, usecase_name: str) -> Any | None:
+    """Map UseCase name → repository method by stripping 'UseCase' and lowercasing first letter."""
+    base = usecase_name.replace("UseCase", "")
+    candidate = base[0].lower() + base[1:] if base else ""
+    for repo in brain.repositories:
+        for method in repo.methods:
+            if method.name == candidate:
+                return method
+    return None
+
+
+def _repo_method_return(method: Any) -> str:
+    """Return type string for a RepositoryMethod (Flow / Result / plain)."""
+    if method.is_flow:
+        return f"Flow<{method.flow_type or 'Any'}>"
+    if method.result_wrapped:
+        return f"Result<{method.result_type or 'Unit'}>"
+    return method.returns or "Unit"
 
 
 def _parse_nav_args(nav_args: list[str]) -> list[dict]:

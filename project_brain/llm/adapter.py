@@ -16,6 +16,8 @@ class FunctionSpec:
     state_updates: list[str] = field(default_factory=list)
     events_fired: list[str] = field(default_factory=list)
     concurrent: bool = False
+    is_override: bool = False
+    is_suspend: bool = False
 
 
 @dataclass
@@ -43,8 +45,13 @@ class NullAdapter:
         stubs: list[str] = []
         for fn in spec.functions:
             params = ", ".join(fn.params)
+            modifiers = ""
+            if fn.is_override:
+                modifiers += "override "
+            if fn.is_suspend:
+                modifiers += "suspend "
             stubs.append(
-                f"    fun {fn.name}({params}): {fn.returns} {{\n"
+                f"    {modifiers}fun {fn.name}({params}): {fn.returns} {{\n"
                 f"        // TODO: implement\n"
                 f"    }}"
             )
