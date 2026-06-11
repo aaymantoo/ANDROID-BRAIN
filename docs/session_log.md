@@ -1,5 +1,21 @@
 # Session Log
 
+## 2026-06-11 (Agent — Option A: brain-build-agent)
+
+- Read ORCHESTRATOR.md and ORCHESTRATOR-SUPPLEMENT.md. Directive: implement Option A only (Claude Code as loop driver; no Python BuildOrchestrator).
+- Created `.claude/agents/brain-build-agent.md`: Claude Code sub-agent definition for the autonomous 13-step build loop. Full loop: get_session_context → get_next_task → phase context (3 parallel) → classify → dependency list → generate → UI design pass (6c) → logic fill pass (7) → compile gate → validate_generation → validate_phase → forecast_bugs → sync_brain → roadmap auto-update. Includes token minimisation rules (ComponentStatus gate, screen_graph reuse, logic fill pass conditional trigger), progress reporting format, and error handling table.
+- Created `.claude/agents/ui-agent.md`: UI design pass agent (Step 6c). Reads design.md, Theme.kt, Typography.kt, Shape.kt, and components/ directory; calls get_screen_graph() via MCP; fills `// TODO: implement screen content` inside scaffold files using only MaterialTheme tokens. validate_design_tokens() acts as the post-pass quality gate.
+- Created `prompts/logic_fill_pass.txt`: logic fill pass prompt for Step 7. Triggers only when `spec_coverage < 1.0 AND used_llm == False`. Provides ViewModel and Repository Kotlin rules (viewModelScope.launch, _uiState.update, runCatching, callbackFlow, etc.). Claude fills TODO stubs directly with no subprocess overhead.
+- Added `brain build` CLI command to `project_brain/cli/commands.py`: flags `--prd`, `--output`, `--brain-path`, `--phase`, `--screen`, `--resume`, `--design-system`. If `--prd` given and brain absent, auto-runs enrich-prd → brain init. Prints agent invocation instructions, then starts `brain serve` (blocking).
+- Created `docs/AGENT-LOOP.md`: full loop reference — dependency order table, task classification matrix, phase-wise feature order guarantee, token minimisation table, output path convention, agent files table.
+- Added `docs/ORCHESTRATOR.md`, `docs/ORCHESTRATOR-SUPPLEMENT.md`, `docs/UI-AGENT-IMPLEMENTATION.md` to version control (planning documents).
+- Bundled generation pipeline fixes: repository impl now routes to `function_fill_repository_v2.txt`; `_strip_markdown()` strips markdown fences from CLI adapter responses; Windows `.cmd` shim support in `CLIAdapter.complete()`; `_repo_return_type()` and `_repo_business_rule()` helpers; `FunctionSpec` gains `state_updates`/`events_fired`/`concurrent`; `FillFunctionsSpec` gains `event_class`; `_functions_spec`/`_ui_state_class` added to `repository_context()` in template_engine.
+- Updated `.gitignore`: replaced blanket `.claude/` exclusion with targeted rules for settings files; `.claude/agents/` is now tracked.
+- Updated `CLAUDE.md` and `README.md`: documented `brain build`, Brain Build Agent section with 13-step loop summary, agent files table.
+- Final test count: **150 tests passing, 3 skipped** — no regressions.
+
+---
+
 ## 2026-06-09
 
 - Read `PROJECT_BRAIN_ENGINE_PRD.md`.

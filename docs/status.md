@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-All phases complete (0B, 0C, 1–6). **150 tests passing.**
+All phases complete (0B, 0C, 1–6) + Agent (Option A). **150 tests passing.**
 
 ## Phase Progress
 
@@ -17,6 +17,20 @@ All phases complete (0B, 0C, 1–6). **150 tests passing.**
 | Phase 4 | Code generation engine (v1 + v2 templates, self-healing, DeterministicFunctionBodyGenerator) | Complete |
 | Phase 5 | Predictive bug engine (5 zero-LLM detectors) | **Complete** |
 | Phase 6 | Self-healing and sync (StateTransitionEngine, sync_brain) | **Complete** |
+| Agent (Option A) | brain-build-agent Claude Code sub-agent, ui-agent, brain build CLI, logic fill pass prompt | **Complete** |
+
+---
+
+## Agent (Option A) Verification
+
+- **150 tests passing** — no regressions from agent layer additions.
+- `.claude/agents/brain-build-agent.md` — Claude Code sub-agent definition for the autonomous 13-step build loop. Claude Code IS the loop driver; all generation goes through MCP tools. Covers: session resume, task classification, dependency-ordered generation, logic fill pass (Step 7, token-minimal), UI design pass (Step 6c, conditional), compile gate, validate_generation ≥ 90% gate, validate_phase, forecast_bugs, sync_brain, and final audit_production_readiness. Includes token minimisation rules and progress reporting format.
+- `.claude/agents/ui-agent.md` — UI design pass agent (Step 6c). Reads design system files (design.md, Theme.kt, Typography.kt, Shape.kt, components/) and fills `// TODO: implement screen content` inside scaffold files using only MaterialTheme tokens.
+- `prompts/logic_fill_pass.txt` — Logic fill pass prompt. Used in Step 7 when `spec_coverage < 1.0 AND used_llm == False`. Provides ViewModel and Repository Kotlin rules for filling TODO stubs.
+- `brain build` CLI command (`project_brain/cli/commands.py`) — accepts `--prd`, `--output`, `--brain-path`, `--phase`, `--screen`, `--resume`, `--design-system`. If `--prd` given and brain absent: runs enrich-prd + brain init automatically. Verifies brain exists, prints agent invocation instructions, then starts `brain serve`.
+- `docs/AGENT-LOOP.md` — full loop reference doc: 13-step summary, dependency order table, task classification matrix, feature-order guarantee, token minimisation table, output path convention.
+- Generation pipeline fixes bundled in same commit: repository impl prompt routing (`function_fill_repository_v2.txt`), `_strip_markdown()` for CLI adapter responses, Windows `.cmd` shim support in `CLIAdapter.complete()`, `_repo_return_type()` / `_repo_business_rule()` helpers in `code_generation.py`, `FunctionSpec` gains `state_updates`/`events_fired`/`concurrent` fields, `FillFunctionsSpec` gains `event_class` field, `_functions_spec`/`_ui_state_class` context keys added to `repository_context()` in `template_engine.py`.
+- `.gitignore` updated: `.claude/` block replaced with targeted exclusions for settings files; `.claude/agents/` is now tracked.
 
 ---
 
@@ -118,6 +132,7 @@ All phases complete (0B, 0C, 1–6). **150 tests passing.**
 - `brain review [--clear-review]` — lists or resolves low-confidence NEEDS_REVIEW items.
 - `brain roadmap [--update] [--feature <id>]` — prints or regenerates ROADMAP.md; filter to one feature.
 - `brain serve` — starts the stdio MCP server using `BRAIN_PATH` or `./PROJECT_BRAIN.json`.
+- `brain build --output <dir> [--prd FILE] [--phase N] [--screen ID] [--resume] [--design-system DIR]` — Agent: enrich + init (if --prd), verify brain, print agent invocation prompt, start brain serve.
 - `brain rollback <file>` — restores the most recent `.brain_backup_*` for a generated file.
 
 ### MCP tools (35 total)
