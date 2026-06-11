@@ -74,6 +74,24 @@ brain rollback path/to/HomeViewModel.kt
 brain doctor
 ```
 
+**Run the autonomous build agent (Option A — Claude Code as loop driver)**
+```
+# Full pipeline from a sparse PRD (enrich + init + start MCP server):
+brain build --prd ./rough.md --output ./app/src/main/kotlin
+
+# From an existing brain:
+brain build --output ./app/src/main/kotlin
+
+# Limit scope:
+brain build --output ./app/src/ --phase 1
+brain build --output ./app/src/ --screen login
+
+# With UI design pass:
+brain build --output ./app/src/ --design-system ./app/src/main/kotlin/ui/theme
+```
+After the server starts, invoke the build agent in Claude Code:
+`"Use the brain-build-agent to build my project to ./app/src/main/kotlin"`
+
 **Show or regenerate the project roadmap**
 ```
 brain roadmap
@@ -83,22 +101,23 @@ brain roadmap --feature auth
 
 **Environment variables** (copy `.env.example` → `.env`):
 - `BRAIN_PATH` — path to `PROJECT_BRAIN.json` (default: `./PROJECT_BRAIN.json`)
-- `ANTHROPIC_API_KEY` — direct Anthropic API (optional — CLI tools take priority)
-- `OPENAI_API_KEY` — direct OpenAI API (optional — CLI tools take priority)
+- `ANTHROPIC_API_KEY` — fallback direct API (only used when no CLI tool is detected)
+- `OPENAI_API_KEY` — fallback direct API (only used when no CLI tool is detected)
 
 ### LLM adapter auto-detection
 
 `brain enrich-prd` and Phase 4 generation use the first available LLM in this priority order:
 
-1. `claude` CLI — Claude Code installed and logged in (**recommended** — no API key needed)
+1. `claude` CLI — Claude Code **Pro subscription** (**recommended** — no API key needed)
 2. `gemini` CLI — Google Gemini CLI
 3. `llm` CLI — Simon Willison's universal LLM CLI (`pip install llm`)
 4. `ollama` — local models, fully offline (`https://ollama.com`)
-5. `ANTHROPIC_API_KEY` env var — direct Anthropic API
+5. `ANTHROPIC_API_KEY` env var — direct Anthropic API (fallback for API-key users)
 6. `OPENAI_API_KEY` env var — direct OpenAI API
 7. `NullAdapter` — graceful degradation (generates `// TODO` stubs)
 
-Run `brain doctor` to see which adapter is active in your environment.
+CLI tools take priority because they reuse the user's existing authenticated session (Claude Code
+Pro, Gemini CLI) with no API key required. Run `brain doctor` to see which adapter is active.
 
 ---
 
@@ -217,6 +236,19 @@ Sync tool (Phase 6 — zero-LLM):
 ### PRD requirements
 
 `brain init --from-prd` gates on a completeness score ≥ 80/100. Run `brain validate-prd` first to see the breakdown by dimension. Use `PRD_TEMPLATE.md` as the canonical template for new PRDs.
+
+### Autonomous build agent (Option A)
+
+The `brain build` command prepares the brain and starts the MCP stdio server. Claude Code IS the loop driver — it calls MCP tools directly.
+
+| File | Purpose |
+|---|---|
+| `.claude/agents/brain-build-agent.md` | 13-step loop agent definition — drives feature → screen → artifact generation |
+| `.claude/agents/ui-agent.md` | UI design pass — fills scaffold `// TODO: implement screen content` using design system |
+| `prompts/logic_fill_pass.txt` | Prompt for logic fill pass — Claude fills TODO stubs when `spec_coverage < 1.0 AND used_llm=False` |
+| `docs/AGENT-LOOP.md` | Full loop reference doc including dependency order, task classification, token minimisation |
+
+See `docs/AGENT-LOOP.md` for the complete loop specification.
 
 ### MVVM violation severities
 

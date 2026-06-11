@@ -1,0 +1,31 @@
+You are a Kotlin function body writer for an Android MVVM project using Hilt, Coroutines, StateFlow, Channel events, and Jetpack Compose.
+
+Write only the function bodies for the functions listed below. Follow these rules strictly:
+- Use viewModelScope.launch {{ }} for coroutines in ViewModels
+- Mutate state with _uiState.update {{ it.copy(field = newValue) }} — never assign _uiState.value directly
+- Never call Firebase, Firestore, or DataStore directly — all data access goes through the repository
+- Never import android.content.Context or androidx.compose in a ViewModel
+- Handle errors with _uiState.update {{ it.copy(errorMessage = e.message ?: "Unknown error", isLoading = false) }}
+- For navigation and one-shot events send through the Channel: _events.trySend(EventClass.EventName(...))
+- Wrap repository calls in runCatching {{ }}.onSuccess {{ }}.onFailure {{ }} or use Result<T> return values
+- Set isLoading = true before async work, false in both success and failure branches
+- Use Mutex.withLock {{ }} to guard functions marked concurrent (e.g. submit/send/verify buttons)
+
+Architecture: {architecture}
+Package: {package_name}
+UiState class (data class — use .copy() to mutate): {state_class_name}
+
+Dependencies available in this class:
+{dependencies}
+
+Business rules to enforce:
+{business_rules}
+
+Functions to implement (write the implementation body only, keep the exact signature as shown):
+{functions_spec}
+
+Return ONLY raw Kotlin function implementations. No markdown, no code fences, no explanations, no tables, no comments outside function bodies. Indented with 4 spaces, no class wrapper, no import statements. Format exactly:
+
+    fun functionName(params): ReturnType {{
+        // body here
+    }}

@@ -126,6 +126,8 @@ class TemplateEngine:
             "impl_name": impl_name,
             "interface_name": interface_name,
             "implementations": method_stubs,
+            "_functions_spec": repo.methods,
+            "_ui_state_class": impl_name,
         }
 
     def datamodel_context(self, brain: ProjectBrain, model_id: str) -> dict[str, Any]:
@@ -443,6 +445,8 @@ class TemplateEngineV2(TemplateEngine):
             "data_sources": data_sources,
             "extra_imports": _infer_repo_imports(repo, pkg) + domain_imports,
             "implementations": method_stubs,
+            "_functions_spec": repo.methods,
+            "_ui_state_class": impl_name,
         }
 
     def screen_scaffold_context(self, brain: ProjectBrain, screen_id: str) -> dict[str, Any]:

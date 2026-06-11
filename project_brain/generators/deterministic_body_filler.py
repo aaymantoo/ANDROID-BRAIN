@@ -196,10 +196,10 @@ class DeterministicFunctionBodyGenerator:
         ui_state_class: str,
         ui_state_type: str,
     ) -> tuple[str, float]:
-        params = list(fn.params) if fn.params else []
-        state_updates = list(fn.state_updates) if fn.state_updates else []
-        events_fired = list(fn.events_fired) if fn.events_fired else []
-        concurrent = bool(fn.concurrent)
+        params = list(getattr(fn, "params", None) or [])
+        state_updates = list(getattr(fn, "state_updates", None) or [])
+        events_fired = list(getattr(fn, "events_fired", None) or [])
+        concurrent = bool(getattr(fn, "concurrent", False))
         returns = fn.returns or "Unit"
 
         # Flow return — direct delegation

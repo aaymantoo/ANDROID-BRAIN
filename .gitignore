@@ -28,8 +28,11 @@ htmlcov/
 .vscode/
 *.iml
 
-# Claude Code session files
-.claude/
+# Claude Code session files — exclude settings but track agent definitions
+.claude/settings.json
+.claude/settings.local.json
+.claude/todos/
+.claude/.last_session
 
 # Test / demo artifacts — generated Kotlin files from demo runs
 generated_v2/

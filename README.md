@@ -29,12 +29,12 @@ Claude Code / Gemini CLI          ← queries, generates, validates, and forecas
 
 | Tool | Works? | Notes |
 |---|---|---|
-| **Claude Code** (`claude`) | Yes — recommended | No config needed if Claude Code is already installed. Brain Engine detects and uses it automatically. |
-| **Gemini CLI** (`gemini`) | Yes | Install: `npm install -g @google/gemini-cli`. Brain Engine detects it automatically. |
+| **Claude Code** (`claude`) | Yes — recommended | Claude Code Pro subscription. No API key needed. Brain Engine calls `claude --print` using your existing session. |
+| **Gemini CLI** (`gemini`) | Yes — no key needed | Install: `npm install -g @google/gemini-cli`. Authenticated via `gemini auth`. |
 | `llm` CLI | Yes | Install: `pip install llm`. Works with Claude, GPT, Gemini, Mistral via plugins. |
 | **Ollama** (local) | Yes | Install: https://ollama.com. Fully offline, no account needed. `ollama pull llama3.2` first. |
-| `ANTHROPIC_API_KEY` | Yes | Fallback when no CLI tool is installed. |
-| `OPENAI_API_KEY` | Yes | Fallback when no CLI tool is installed. |
+| `ANTHROPIC_API_KEY` | Yes | Fallback when no CLI tool is installed. API-key users only. |
+| `OPENAI_API_KEY` | Yes | Fallback when no CLI tool is installed. API-key users only. |
 | Nothing installed | Yes (degraded) | Generates `// TODO` stubs. Brain reading and validation still work fully. |
 
 Run `brain doctor` at any time to see which adapter is active.

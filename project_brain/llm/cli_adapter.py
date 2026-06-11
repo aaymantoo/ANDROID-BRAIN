@@ -16,6 +16,7 @@ no argument-length limits for long prompts.
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -25,8 +26,29 @@ from project_brain.llm.adapter import FillFunctionsSpec
 
 _PROMPT_PATH_V1 = Path(__file__).parent.parent.parent / "prompts" / "function_fill_v1.txt"
 _PROMPT_PATH_V2 = Path(__file__).parent.parent.parent / "prompts" / "function_fill_v2.txt"
+_PROMPT_PATH_REPO = Path(__file__).parent.parent.parent / "prompts" / "function_fill_repository_v2.txt"
 _CLI_TIMEOUT = 180  # seconds — CLI calls are slower than direct API
 _DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.75  # skip LLM when deterministic confidence >= this
+
+
+def _strip_markdown(text: str) -> str:
+    """Extract raw Kotlin from an LLM response that may be wrapped in markdown fences.
+
+    If ``` fences are present, returns only the fenced content joined together.
+    If no fences, strips any trailing non-code prose (markdown tables, headers,
+    bold text) that follows the last closing brace.
+    """
+    fenced = re.findall(r"```(?:kotlin)?\s*\n(.*?)```", text, re.DOTALL)
+    if fenced:
+        return "\n\n".join(block.strip() for block in fenced)
+    # No fences — trim trailing markdown prose after the last closing brace
+    lines = text.splitlines()
+    last_brace_idx = len(lines)
+    for i in range(len(lines) - 1, -1, -1):
+        if "}" in lines[i]:
+            last_brace_idx = i + 1
+            break
+    return "\n".join(lines[:last_brace_idx]).strip()
 
 
 class CLIAdapter(ABC):
@@ -43,6 +65,10 @@ class CLIAdapter(ABC):
     async def complete(self, prompt: str) -> str:
         """Send prompt via stdin, return response from stdout."""
         cmd = self._args()
+        # On Windows, npm-installed CLIs are .cmd files and cannot be exec'd directly.
+        exe = shutil.which(self.CLI_COMMAND)
+        if exe and exe.lower().endswith(".cmd"):
+            cmd = ["cmd", "/c"] + cmd
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
@@ -65,13 +91,20 @@ class CLIAdapter(ABC):
         return stdout.decode("utf-8", errors="replace").strip()
 
     async def fill_functions(self, spec: FillFunctionsSpec) -> str:
-        # Try deterministic generation first — saves LLM call for 80-90% of cases
-        from project_brain.generators.deterministic_body_filler import DeterministicFunctionBodyGenerator
-        det_result, confidence = DeterministicFunctionBodyGenerator().fill(spec)
-        if confidence >= _DETERMINISTIC_CONFIDENCE_THRESHOLD:
-            return det_result
+        # Repository impls skip the deterministic filler (no state_updates/events in repo methods)
+        if spec.ui_state_type != "repository":
+            from project_brain.generators.deterministic_body_filler import DeterministicFunctionBodyGenerator
+            extra = {"event_class": spec.event_class} if spec.event_class else None
+            det_result, confidence = DeterministicFunctionBodyGenerator().fill(spec, extra_context=extra)
+            if confidence >= _DETERMINISTIC_CONFIDENCE_THRESHOLD:
+                return det_result
 
-        prompt_path = _PROMPT_PATH_V2 if spec.ui_state_type == "data_class" else _PROMPT_PATH_V1
+        if spec.ui_state_type == "repository":
+            prompt_path = _PROMPT_PATH_REPO
+        elif spec.ui_state_type == "data_class":
+            prompt_path = _PROMPT_PATH_V2
+        else:
+            prompt_path = _PROMPT_PATH_V1
         prompt_template = prompt_path.read_text(encoding="utf-8")
         functions_spec = "\n\n".join(
             f"fun {fn.name}({', '.join(fn.params)}): {fn.returns}"
@@ -92,7 +125,8 @@ class CLIAdapter(ABC):
             business_rules="\n".join(spec.business_rules) or "none",
             functions_spec=functions_spec + violation_note,
         )
-        return await self.complete(prompt)
+        raw = await self.complete(prompt)
+        return _strip_markdown(raw)
 
     # ── Subclass contract ───────────────────────────────────────────
 

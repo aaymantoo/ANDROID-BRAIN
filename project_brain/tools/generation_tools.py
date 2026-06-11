@@ -21,7 +21,7 @@ class GenerationTools:
     ) -> None:
         self._orchestrator = GenerationOrchestrator(
             brain=brain,
-            llm=llm or NullAdapter(),
+            llm=llm,  # None → GenerationOrchestrator calls create_adapter()
             brain_path=brain_path,
         )
 

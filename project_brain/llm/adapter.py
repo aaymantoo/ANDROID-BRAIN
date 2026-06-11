@@ -13,6 +13,9 @@ class FunctionSpec:
     params: list[str] = field(default_factory=list)
     returns: str = "Unit"
     business_rule: str | None = None
+    state_updates: list[str] = field(default_factory=list)
+    events_fired: list[str] = field(default_factory=list)
+    concurrent: bool = False
 
 
 @dataclass
@@ -21,6 +24,7 @@ class FillFunctionsSpec:
     architecture: str
     package_name: str
     state_class_name: str
+    event_class: str | None = None
     dependencies: list[str] = field(default_factory=list)
     business_rules: list[str] = field(default_factory=list)
     violations_to_avoid: list[str] = field(default_factory=list)
@@ -54,13 +58,17 @@ def create_adapter() -> LLMAdapter:
     """Return the best available LLM adapter.
 
     Detection order (first match wins):
-      1. claude  CLI — Claude Code installed and logged in (no API key needed)
+      1. claude  CLI — Claude Code Pro subscription (recommended — no API key needed)
       2. gemini  CLI — Google Gemini CLI
       3. llm     CLI — Simon Willison's universal LLM CLI
       4. ollama  CLI — local models, fully offline
-      5. ANTHROPIC_API_KEY env var → direct Anthropic API
+      5. ANTHROPIC_API_KEY env var → direct Anthropic API (fallback for API-key users)
       6. OPENAI_API_KEY    env var → direct OpenAI API
       7. NullAdapter       → TODO stubs (no LLM available)
+
+    CLI tools take priority because they reuse the user's existing authenticated session
+    (Claude Code Pro, Gemini CLI auth) with no API key required. API keys are the fallback
+    for users who do not have a CLI tool installed but have an explicit key.
     """
     from project_brain.llm.cli_adapter import detect_cli_adapter
 

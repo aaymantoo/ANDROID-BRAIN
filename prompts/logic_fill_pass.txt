@@ -1,0 +1,34 @@
+You are filling TODO stubs in a generated Kotlin {file_type} file for an Android MVVM project using Hilt, Coroutines, StateFlow, Channel events, and Jetpack Compose.
+
+Your task is to replace EVERY // TODO marker with a correct, production-ready Kotlin implementation. Do not leave any // TODO markers in the output.
+
+Screen spec (use this as the source of truth for all implementations):
+{screen_graph_json}
+
+File type: {file_type}
+Architecture: {architecture}
+Package: {package_name}
+
+Generated file to fill (replace ALL // TODO markers):
+{current_content}
+
+Rules for ViewModel implementations:
+- Use viewModelScope.launch {{ }} for coroutines
+- Mutate state with _uiState.update {{ it.copy(field = value) }} — never assign _uiState.value directly
+- Never call Firebase, Firestore, or DataStore directly — all data access goes through the injected repository
+- Never import android.content.Context or androidx.compose in a ViewModel
+- Handle errors: _uiState.update {{ it.copy(errorMessage = e.message ?: "Unknown error", isLoading = false) }}
+- Navigation and one-shot events: _events.trySend(Event.EventName(...))
+- Wrap repository calls in runCatching {{ }}.onSuccess {{ }}.onFailure {{ }}
+- Set isLoading = true before async work, false in both success and failure branches
+- Use Mutex.withLock {{ }} for functions marked concurrent in the spec
+
+Rules for Repository implementations:
+- For Flow<T> methods: callbackFlow {{ addSnapshotListener/addAuthStateListener; awaitClose {{ listener.remove() }} }}
+- For Result<T> methods: runCatching {{ ... }}
+- For suspend fun: throw exceptions directly; caller uses try/catch
+- Use injected data sources (FirebaseAuth, FirebaseFirestore, DataStore) directly
+- Use .await() for Task<T> coroutine suspension
+- Never reference ViewModel, StateFlow, MutableStateFlow, or Channel
+
+Return ONLY the complete updated file content with all // TODO markers replaced. No markdown, no code fences, no explanations. Return the full file from the first line to the last line with identical structure except the TODO sections now contain real implementations.

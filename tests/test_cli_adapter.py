@@ -84,21 +84,22 @@ class TestCLIAdapterDetection(TestCase):
 
 class TestCreateAdapterPriority(TestCase):
     def test_cli_adapter_takes_priority_over_api_key(self):
-        """Even with ANTHROPIC_API_KEY set, if claude CLI is available it wins."""
+        """Claude Code CLI wins over ANTHROPIC_API_KEY — Pro subscription needs no API key."""
         def fake_which(cmd):
             return "/usr/local/bin/claude" if cmd == "claude" else None
-        with patch("shutil.which", side_effect=fake_which):
-            import os
-            original = os.environ.get("ANTHROPIC_API_KEY")
-            os.environ["ANTHROPIC_API_KEY"] = "sk-test-key"
-            try:
+
+        import os
+        original = os.environ.get("ANTHROPIC_API_KEY")
+        os.environ["ANTHROPIC_API_KEY"] = "sk-test-key"
+        try:
+            with patch("shutil.which", side_effect=fake_which):
                 adapter = create_adapter()
                 self.assertIsInstance(adapter, ClaudeCodeCLIAdapter)
-            finally:
-                if original is None:
-                    os.environ.pop("ANTHROPIC_API_KEY", None)
-                else:
-                    os.environ["ANTHROPIC_API_KEY"] = original
+        finally:
+            if original is None:
+                os.environ.pop("ANTHROPIC_API_KEY", None)
+            else:
+                os.environ["ANTHROPIC_API_KEY"] = original
 
     def test_falls_back_to_null_when_nothing_available(self):
         import os

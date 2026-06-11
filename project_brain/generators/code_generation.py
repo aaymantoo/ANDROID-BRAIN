@@ -285,36 +285,51 @@ class GenerationOrchestrator:
         """Generation loop with LLM function fill and self-healing."""
         functions_spec = ctx.pop("_functions_spec", [])
         state_class = ctx.pop("_ui_state_class", "UiState")
+        event_class = ctx.get("event_class")
         violations_to_avoid: list[str] = []
         used_llm = False
 
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             # Step 1: Fill function bodies
             if functions_spec:
+                is_repo_impl = "repository_impl" in template_name
                 fn_specs = [
                     FunctionSpec(
                         name=f.name,
-                        params=list(f.params),
-                        returns=f.returns,
-                        business_rule=f.business_rule,
+                        params=list(f.params) if f.params else [],
+                        returns=_repo_return_type(f) if is_repo_impl else (f.returns or "Unit"),
+                        business_rule=_repo_business_rule(f) if is_repo_impl else getattr(f, "business_rule", None),
+                        state_updates=list(getattr(f, "state_updates", None) or []),
+                        events_fired=list(getattr(f, "events_fired", None) or []),
+                        concurrent=bool(getattr(f, "concurrent", False)),
                     )
                     for f in functions_spec
                 ]
+                if is_repo_impl:
+                    deps = [f"{d['param_name']}: {d['type']}" for d in ctx.get("data_sources", [])]
+                    ui_state_type = "repository"
+                else:
+                    deps = [f"{d['param_name']}: {d['type']}" for d in ctx.get("dependencies", [])]
+                    ui_state_type = "data_class" if isinstance(self.engine, TemplateEngineV2) else "sealed_class"
                 fill_spec = FillFunctionsSpec(
                     functions=fn_specs,
                     architecture=self.brain.meta.architecture,
                     package_name=self.brain.meta.package_name or "com.example.app",
                     state_class_name=state_class,
-                    dependencies=[f"{d['param_name']}: {d['type']}" for d in ctx.get("dependencies", [])],
+                    event_class=event_class,
+                    dependencies=deps,
                     business_rules=[rule.description for rule in self.brain.business_rules],
                     violations_to_avoid=violations_to_avoid,
-                    ui_state_type="data_class" if isinstance(self.engine, TemplateEngineV2) else "sealed_class",
+                    ui_state_type=ui_state_type,
                 )
                 try:
                     ctx["functions"] = await self.llm.fill_functions(fill_spec)
                     used_llm = not isinstance(self.llm, NullAdapter)
-                except Exception:
-                    ctx["functions"] = "    // TODO: implement"
+                except Exception as _fill_err:
+                    ctx["functions"] = f"    // TODO: implement  // fill_error: {type(_fill_err).__name__}: {_fill_err}"
+                # Repository impl template uses {{ implementations }} not {{ functions }}
+                if is_repo_impl:
+                    ctx["implementations"] = ctx["functions"]
 
             # Step 2: Render template
             content = self.engine.render(template_name, ctx)
@@ -387,6 +402,27 @@ def _spec_coverage(content: str) -> float | None:
         return None
     todo_count = content.count("// TODO")
     return round(max(0, fn_count - todo_count) / fn_count, 2)
+
+
+def _repo_return_type(m: Any) -> str:
+    """Derive the Kotlin return type string for a RepositoryMethod."""
+    if m.is_flow:
+        return f"Flow<{m.flow_type or 'Any'}>"
+    if m.result_wrapped:
+        return f"Result<{m.result_type or 'Unit'}>"
+    return m.returns or "Unit"
+
+
+def _repo_business_rule(m: Any) -> str:
+    """Encode repository method structural info as a business_rule hint for the LLM."""
+    parts = []
+    if m.is_flow:
+        parts.append(f"Returns Flow<{m.flow_type}>. Use callbackFlow with an auth/Firestore listener.")
+    elif m.result_wrapped:
+        parts.append(f"Result-wrapped. Wrap implementation in runCatching {{}}.")
+    if getattr(m, "firestore_path", None):
+        parts.append(f"Firestore path: {m.firestore_path}")
+    return " ".join(parts) if parts else ""
 
 
 def _auto_fix(content: str, violations: list[Violation]) -> str:

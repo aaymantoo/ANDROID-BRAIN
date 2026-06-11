@@ -232,6 +232,118 @@ def roadmap(brain_path: Path | None, update: bool, feature_id: str | None) -> No
     click.echo(rg.generate(brain))
 
 
+@cli.command("build")
+@click.option("--prd", "prd_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="Sparse PRD to enrich and init before building.")
+@click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Directory to write generated Kotlin files.")
+@click.option("--brain-path", type=click.Path(dir_okay=False, path_type=Path), default=None)
+@click.option("--phase", type=int, default=None, help="Limit build to a single phase number.")
+@click.option("--screen", "screen_id", default=None, help="Limit build to a single screen id.")
+@click.option("--resume", is_flag=True, help="Continue from where the last session stopped (default behaviour).")
+@click.option("--design-system", "design_system_dir", type=click.Path(path_type=Path), default=None, help="Path to design system dir (ui/theme + components) for UI design pass.")
+def build(
+    prd_path: Path | None,
+    output: Path,
+    brain_path: Path | None,
+    phase: int | None,
+    screen_id: str | None,
+    resume: bool,
+    design_system_dir: Path | None,
+) -> None:
+    """Drive the full project build loop via the brain-build-agent in Claude Code.
+
+    This command prepares the brain (enriching and initialising from a PRD when
+    --prd is given) and then starts the MCP stdio server so Claude Code can run
+    the autonomous 13-step build agent.
+
+    Typical usage:
+
+    \b
+    # Full pipeline from a sparse PRD:
+    brain build --prd ./rough.md --output ./app/src/main/kotlin
+
+    \b
+    # Build from an existing brain:
+    brain build --output ./app/src/main/kotlin
+
+    \b
+    # Build a single phase or screen:
+    brain build --output ./app/src/ --phase 1
+    brain build --output ./app/src/ --screen login
+
+    After the server starts, invoke the agent in Claude Code:
+    "Use the brain-build-agent to build my project to <output>"
+    """
+    import asyncio
+
+    resolved_brain = Path(brain_path or os.environ.get("BRAIN_PATH", "PROJECT_BRAIN.json"))
+
+    # ── Step 1: enrich + init if --prd given and brain does not yet exist ──
+    if prd_path and not resolved_brain.exists():
+        from project_brain.generators.prd_enricher import PRDEnricher
+        from project_brain.llm.adapter import create_adapter, describe_adapter
+
+        adapter = create_adapter()
+        click.echo(f"LLM adapter: {describe_adapter(adapter)}")
+
+        enriched_path = prd_path.with_suffix(".enriched.md")
+        click.echo(f"Enriching PRD: {prd_path} → {enriched_path}")
+        enricher = PRDEnricher(llm=adapter)
+        result = asyncio.run(enricher.enrich_file(prd_path, output_path=enriched_path))
+        click.echo(f"Enrichment score: {result.score}/100")
+
+        if not result.ready_for_brain:
+            click.echo("Warning: enrichment score < 90. Review [UNKNOWN] markers before continuing.")
+
+        from project_brain.generators.brain_generator import BrainGenerator
+        from project_brain.generators.prd_parser import IncompletePRDError
+
+        generator = BrainGenerator()
+        try:
+            brain = generator.from_prd(enriched_path)
+        except IncompletePRDError as exc:
+            raise click.ClickException(f"PRD score {exc.score.total}/100 — must be ≥ 80.") from exc
+
+        generator.write(brain, resolved_brain)
+        click.echo(f"Brain written to: {resolved_brain}")
+
+    elif prd_path and resolved_brain.exists():
+        click.echo(f"Brain already exists at {resolved_brain} — skipping PRD init.")
+
+    if not resolved_brain.exists():
+        raise click.ClickException(
+            f"No brain found at {resolved_brain}. "
+            "Run: brain init --from-prd <prd>  OR  provide --prd to auto-init."
+        )
+
+    # ── Step 2: print agent invocation instructions ──
+    scope_flags = ""
+    if phase is not None:
+        scope_flags += f" --phase {phase}"
+    if screen_id:
+        scope_flags += f" --screen {screen_id}"
+    if design_system_dir:
+        scope_flags += f" --design-system {design_system_dir}"
+
+    click.echo()
+    click.echo("=" * 60)
+    click.echo("Brain Engine is ready. MCP server starting now.")
+    click.echo()
+    click.echo("In your Claude Code session, type:")
+    click.echo()
+    click.echo(f'  Use the brain-build-agent to build my project to {output}{scope_flags}')
+    click.echo()
+    click.echo("Or for a specific feature:")
+    click.echo(f'  Use brain-build-agent: build feature auth to {output}')
+    click.echo("=" * 60)
+    click.echo()
+
+    os.environ["BRAIN_PATH"] = str(resolved_brain)
+
+    from project_brain.server import main as server_main
+
+    server_main()
+
+
 @cli.command("sync")
 def sync() -> None:
     """Reserved for Phase 6 incremental sync."""
