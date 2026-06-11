@@ -91,9 +91,8 @@ class RegistryPhase4Test(unittest.IsolatedAsyncioTestCase):
 
     def test_registry_exposes_all_tools(self) -> None:
         names = [tool.name for tool in self.registry.list_definitions()]
-        # 29 original + 6 new (forecast_bugs, detect_race_conditions, detect_orphaned_documents,
-        # audit_production_readiness, validate_generation, sync_brain)
-        self.assertEqual(len(names), 35)
+        # 35 original + 3 incremental enrichment tools
+        self.assertEqual(len(names), 38)
 
     def test_all_generation_tools_registered(self) -> None:
         names = {tool.name for tool in self.registry.list_definitions()}

@@ -25,6 +25,11 @@ from project_brain.tools.bug_tools import (
     forecast_bugs_brain,
 )
 from project_brain.tools.management_tools import sync_brain_instance
+from project_brain.tools.incremental_tools import (
+    aggregate_brain_cache,
+    get_enrichment_status,
+    get_feature_artifacts,
+)
 from project_brain.tools.validation_tools import (
     validate_design_tokens_brain,
     validate_firestore_consistency_brain,
@@ -60,10 +65,15 @@ class ToolDefinition:
 class ToolRegistry:
     """In-memory registry initialized with a loaded ProjectBrain."""
 
-    def __init__(self, brain: ProjectBrain, llm: LLMAdapter | None = None) -> None:
+    def __init__(
+        self,
+        brain: ProjectBrain,
+        llm: LLMAdapter | None = None,
+        brain_path: str = "PROJECT_BRAIN.json",
+    ) -> None:
         self.brain = brain
         self.read_tools = ReadTools(brain)
-        self.generation_tools = GenerationTools(brain, llm or NullAdapter())
+        self.generation_tools = GenerationTools(brain, llm or NullAdapter(), brain_path=brain_path)
         self._tools = self._build_tools()
 
     def list_definitions(self) -> list[ToolDefinition]:
@@ -410,9 +420,37 @@ class ToolRegistry:
                 no_arg,
                 lambda _: get_project_roadmap(self.brain),
             ),
+            # ── Incremental Enrichment tools ─────────────────────────
+            ToolDefinition(
+                "get_enrichment_status",
+                "Return the current incremental enrichment session status: completed / pending / failed features and the last checkpoint. Use to decide whether to call brain resume or start fresh.",
+                no_arg,
+                lambda _: get_enrichment_status(),
+            ),
+            ToolDefinition(
+                "get_feature_artifacts",
+                "Return all artifacts (screens, ViewModels, repositories, business rules, state machines) for a single enriched feature from brain/features/{feature_id}/.",
+                {
+                    "type": "object",
+                    "properties": {"feature_id": {"type": "string"}},
+                    "required": ["feature_id"],
+                    "additionalProperties": False,
+                },
+                lambda args: get_feature_artifacts(str(args["feature_id"])),
+            ),
+            ToolDefinition(
+                "aggregate_brain",
+                "Rebuild brain/cache/aggregated_brain.json from all feature artifact files. Call after adding or updating any feature to refresh the aggregated view.",
+                no_arg,
+                lambda _: aggregate_brain_cache(),
+            ),
         ]
         return {tool.name: tool for tool in tools}
 
 
-def create_registry(brain: ProjectBrain, llm: LLMAdapter | None = None) -> ToolRegistry:
-    return ToolRegistry(brain, llm or create_adapter())
+def create_registry(
+    brain: ProjectBrain,
+    llm: LLMAdapter | None = None,
+    brain_path: str = "PROJECT_BRAIN.json",
+) -> ToolRegistry:
+    return ToolRegistry(brain, llm or create_adapter(), brain_path=brain_path)

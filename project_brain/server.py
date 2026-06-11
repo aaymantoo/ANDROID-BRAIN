@@ -35,8 +35,9 @@ async def run_server(brain_path: str | None = None) -> None:
 
     from mcp.server.stdio import stdio_server
 
-    manager = BrainManager(brain_path or os.environ.get("BRAIN_PATH", "PROJECT_BRAIN.json"))
-    registry = create_registry(manager.load())
+    resolved = brain_path or os.environ.get("BRAIN_PATH", "PROJECT_BRAIN.json")
+    manager = BrainManager(resolved)
+    registry = create_registry(manager.load(), brain_path=resolved)
     app = build_server(registry)
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())

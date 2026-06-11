@@ -99,6 +99,19 @@ brain roadmap --update
 brain roadmap --feature auth
 ```
 
+**Incremental feature-by-feature enrichment (large PRDs)**
+```
+# Enrich a single feature
+brain enrich-feature auth --prd ./enriched_prd.md
+
+# Enrich all features in a named phase
+brain enrich-phase payments --prd ./enriched_prd.md
+
+# Resume after interruption (reads brain/generation/status.json)
+brain resume --prd ./enriched_prd.md
+```
+After enriching, `brain/cache/aggregated_brain.json` is auto-generated and can be used as the `BRAIN_PATH` for `brain serve`.
+
 **Environment variables** (copy `.env.example` → `.env`):
 - `BRAIN_PATH` — path to `PROJECT_BRAIN.json` (default: `./PROJECT_BRAIN.json`)
 - `ANTHROPIC_API_KEY` — fallback direct API (only used when no CLI tool is detected)
@@ -170,6 +183,9 @@ brain serve ──► server.py ──► ToolRegistry(brain) ──► MCP tool
 | `project_brain/engines/template_engine.py` | `TemplateEngine` (v1) and `TemplateEngineV2` (enterprise). `_resolve_domain_imports()` maps `AppResult`/`User` return types to `domain.util`/`domain.model` import paths. v3: `_render_ui_components()` converts `Screen.ui_components` → pre-rendered Kotlin Column body; `_build_result_stub()` emits Firebase-pattern boilerplate from `RepositoryMethod.firebase_pattern`; `_find_loading_state_field()` / `_find_error_state_field()` derive correct field names for test stubs. |
 | `project_brain/generators/code_generation.py` | `GenerationOrchestrator` — template render → LLM fill → MVVM validate → auto-fix CLASS_A → retry (×3). `write_result()` runs `CompileVerifier` (kotlinc smoke-check), calls `BugEngine.forecast()` for ViewModel/Repository files, and computes `spec_coverage`. `RepositoryPair` + `write_repository_pair()` produce two separate `.kt` files. |
 | `project_brain/tools/generation_tools.py` | `GenerationTools` MCP facade for all 9 generation methods. `generate_repository()` with `output_path` writes two files via `write_repository_pair()`. |
+| `project_brain/brain/incremental_manager.py` | `IncrementalBrainManager` — manages `brain/` directory (features/, generation/, cache/). Atomic per-feature saves, status checkpoint, `aggregate()` to rebuild full brain from parts. |
+| `project_brain/generators/incremental_enricher.py` | `IncrementalEnricher` — feature-by-feature enrichment with resume. `split_prd_into_features()` detects H2/H3 feature sections. Checkpoints after every feature; `brain resume` continues from `last_checkpoint`. |
+| `project_brain/tools/incremental_tools.py` | MCP facades: `get_enrichment_status`, `get_feature_artifacts`, `aggregate_brain_cache`. |
 
 ### Phase status
 
@@ -182,7 +198,7 @@ brain serve ──► server.py ──► ToolRegistry(brain) ──► MCP tool
 - **Phase 5 (Bug Forecasting)** — complete. `BugEngine` with 5 zero-LLM detectors. Four MCP tools.
 - **Phase 6 (Self-Healing & Sync)** — complete. `StateTransitionEngine`, `sync_brain`. `brain sync` CLI command.
 
-### MCP tool catalogue (35 tools — all live)
+### MCP tool catalogue (38 tools — all live)
 
 Read tools (no arguments unless noted):
 - `get_project_context` — meta, architecture, phases, design system
@@ -232,6 +248,11 @@ Bug forecasting tools (Phase 5 — all zero-LLM):
 
 Sync tool (Phase 6 — zero-LLM):
 - `sync_brain` — re-scan all previously generated files for drift from brain spec; adds `NEEDS_REVIEW` violations
+
+Incremental enrichment tools (zero-LLM reads, LLM-assisted writes):
+- `get_enrichment_status` — show session status: completed / pending / failed features and last checkpoint
+- `get_feature_artifacts(feature_id)` — read all artifacts for one feature from `brain/features/{id}/`
+- `aggregate_brain` — rebuild `brain/cache/aggregated_brain.json` from all feature artifact files
 
 ### v3 brain spec — enrichment fields
 

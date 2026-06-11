@@ -382,6 +382,119 @@ def build(
         click.echo("After registering, reload Claude Code and paste the prompt above.")
 
 
+@cli.command("enrich-feature")
+@click.argument("feature_id")
+@click.option("--prd", "prd_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True, help="PRD file to extract the feature from.")
+@click.option("--brain-dir", type=click.Path(path_type=Path), default=Path("brain"), show_default=True, help="Root directory for incremental brain artifacts.")
+@click.option("--feature-name", default=None, help="Human-readable feature name (optional; inferred from PRD if omitted).")
+def enrich_feature(feature_id: str, prd_path: Path, brain_dir: Path, feature_name: str | None) -> None:
+    """Enrich a single feature from the PRD and save its artifacts to brain/.
+
+    \b
+    Example:
+        brain enrich-feature auth --prd ./enriched_prd.md
+        brain enrich-feature booking --prd ./enriched_prd.md --brain-dir ./my_brain
+    """
+    import asyncio
+    from project_brain.generators.incremental_enricher import IncrementalEnricher
+    from project_brain.llm.adapter import create_adapter, describe_adapter
+
+    adapter = create_adapter()
+    click.echo(f"LLM adapter:  {describe_adapter(adapter)}")
+    click.echo(f"Brain dir:    {brain_dir}")
+    click.echo(f"Feature:      {feature_id}")
+
+    enricher = IncrementalEnricher(llm=adapter, brain_dir=brain_dir)
+    artifacts = asyncio.run(
+        enricher.enrich_feature(feature_id, prd_path, feature_name=feature_name)
+    )
+
+    if artifacts:
+        click.echo(f"\nFeature '{feature_id}' enriched successfully.")
+        click.echo(f"  Screens:        {len(artifacts.screens)}")
+        click.echo(f"  ViewModels:     {len(artifacts.viewmodels)}")
+        click.echo(f"  Repositories:   {len(artifacts.repositories)}")
+        click.echo(f"  Business rules: {len(artifacts.business_rules)}")
+        click.echo(f"  Audit passed:   {artifacts.audit_passed}")
+        click.echo(f"\n  Artifacts: {brain_dir / 'features' / feature_id}/")
+        agg_path = brain_dir / "cache" / "aggregated_brain.json"
+        click.echo(f"  Aggregated:  {agg_path}")
+    else:
+        raise click.ClickException(f"Enrichment of feature '{feature_id}' failed. Check --prd and retry.")
+
+
+@cli.command("enrich-phase")
+@click.argument("phase_name")
+@click.option("--prd", "prd_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True, help="PRD file to extract features from.")
+@click.option("--brain-dir", type=click.Path(path_type=Path), default=Path("brain"), show_default=True)
+@click.option("--features", "feature_ids", default=None, help="Comma-separated feature IDs to include (optional; auto-detected from PRD if omitted).")
+def enrich_phase(phase_name: str, prd_path: Path, brain_dir: Path, feature_ids: str | None) -> None:
+    """Enrich all features in a named phase and save artifacts to brain/.
+
+    \b
+    Example:
+        brain enrich-phase auth --prd ./enriched_prd.md
+        brain enrich-phase payments --prd ./prd.md --features payment_flow,refund_flow
+    """
+    import asyncio
+    from project_brain.generators.incremental_enricher import IncrementalEnricher
+    from project_brain.llm.adapter import create_adapter, describe_adapter
+
+    adapter = create_adapter()
+    click.echo(f"LLM adapter:  {describe_adapter(adapter)}")
+    click.echo(f"Brain dir:    {brain_dir}")
+    click.echo(f"Phase:        {phase_name}")
+
+    ids = [f.strip() for f in feature_ids.split(",")] if feature_ids else None
+    enricher = IncrementalEnricher(llm=adapter, brain_dir=brain_dir)
+    result = asyncio.run(enricher.enrich_phase(phase_name, prd_path, phase_feature_ids=ids))
+
+    click.echo(f"\nPhase '{phase_name}' enrichment complete.")
+    click.echo(f"  Completed: {result.completed}")
+    click.echo(f"  Failed:    {result.failed}")
+    click.echo(f"  Skipped:   {result.skipped}")
+
+    if result.failed:
+        raise click.ClickException(f"{len(result.failed)} feature(s) failed. Run `brain resume --prd {prd_path}` to retry.")
+
+
+@cli.command("resume")
+@click.option("--prd", "prd_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True, help="Original PRD file — needed to re-read pending feature sections.")
+@click.option("--brain-dir", type=click.Path(path_type=Path), default=Path("brain"), show_default=True)
+def resume(prd_path: Path, brain_dir: Path) -> None:
+    """Resume incremental enrichment from the last checkpoint.
+
+    Reads brain/generation/status.json to find pending or failed features,
+    then continues enrichment without re-processing already-completed ones.
+
+    \b
+    Example:
+        brain resume --prd ./enriched_prd.md
+    """
+    import asyncio
+    from project_brain.generators.incremental_enricher import IncrementalEnricher
+    from project_brain.llm.adapter import create_adapter, describe_adapter
+
+    adapter = create_adapter()
+    click.echo(f"LLM adapter:  {describe_adapter(adapter)}")
+    click.echo(f"Brain dir:    {brain_dir}")
+    click.echo("Resuming from last checkpoint...")
+
+    enricher = IncrementalEnricher(llm=adapter, brain_dir=brain_dir)
+    try:
+        result = asyncio.run(enricher.resume(prd_path))
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"\nResume complete.")
+    click.echo(f"  Completed: {result.completed}")
+    click.echo(f"  Failed:    {result.failed}")
+    click.echo(f"  Skipped (already done): {result.skipped}")
+
+    if result.failed:
+        click.echo(f"\nWarning: {len(result.failed)} feature(s) still failed. Review PRD sections and retry.")
+
+
 @cli.command("sync")
 def sync() -> None:
     """Reserved for Phase 6 incremental sync."""

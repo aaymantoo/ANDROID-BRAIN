@@ -376,3 +376,77 @@ class ProjectBrain(StrictModel):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# ── Incremental Enrichment Pipeline ─────────────────────────────────────────
+
+
+class FeatureArtifacts(StrictModel):
+    """All artifacts for a single feature; stored under brain/features/{id}/."""
+
+    feature_id: str
+    feature_name: str
+    screens: list[Screen] = Field(default_factory=list)
+    viewmodels: list[ViewModel] = Field(default_factory=list)
+    repositories: list[Repository] = Field(default_factory=list)
+    business_rules: list[BusinessRule] = Field(default_factory=list)
+    state_machines: list[StateMachine] = Field(default_factory=list)
+    use_cases: list[str] = Field(default_factory=list)
+    data_models: list[DataModel] = Field(default_factory=list)
+    enriched_at: str = Field(default_factory=lambda: utc_now())
+    audit_passed: bool = False
+
+
+class FeatureEnrichmentStatus(StrictModel):
+    """Per-feature enrichment progress record."""
+
+    feature_id: str
+    feature_name: str = ""
+    status: str = "pending"   # pending | enriching | complete | failed
+    completed_at: str | None = None
+    audit_passed: bool = False
+    error: str | None = None
+
+
+class EnrichmentSession(StrictModel):
+    """Checkpoint for an incremental enrichment run — enables resume after interruption."""
+
+    session_id: str
+    started_at: str = Field(default_factory=lambda: utc_now())
+    last_updated: str = Field(default_factory=lambda: utc_now())
+    last_checkpoint: str | None = None     # feature_id of last completed feature
+    prd_path: str | None = None
+    completed_features: list[str] = Field(default_factory=list)
+    pending_features: list[str] = Field(default_factory=list)
+    failed_features: list[str] = Field(default_factory=list)
+    phase_order: list[str] = Field(default_factory=list)
+    completed_phases: list[str] = Field(default_factory=list)
+    features: list[FeatureEnrichmentStatus] = Field(default_factory=list)
+
+    def feature_status(self, feature_id: str) -> FeatureEnrichmentStatus | None:
+        return next((f for f in self.features if f.feature_id == feature_id), None)
+
+    def mark_complete(self, feature_id: str) -> None:
+        self.last_checkpoint = feature_id
+        self.last_updated = utc_now()
+        if feature_id not in self.completed_features:
+            self.completed_features.append(feature_id)
+        if feature_id in self.pending_features:
+            self.pending_features.remove(feature_id)
+        for f in self.features:
+            if f.feature_id == feature_id:
+                f.status = "complete"
+                f.completed_at = utc_now()
+                break
+
+    def mark_failed(self, feature_id: str, error: str) -> None:
+        self.last_updated = utc_now()
+        if feature_id not in self.failed_features:
+            self.failed_features.append(feature_id)
+        if feature_id in self.pending_features:
+            self.pending_features.remove(feature_id)
+        for f in self.features:
+            if f.feature_id == feature_id:
+                f.status = "failed"
+                f.error = error
+                break

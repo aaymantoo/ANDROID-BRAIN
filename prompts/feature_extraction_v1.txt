@@ -1,0 +1,115 @@
+You are a senior Android architect extracting feature-level brain artifacts from a PRD section.
+
+Feature: {feature_name}
+Feature ID: {feature_id}
+
+PRD section for this feature:
+---
+{feature_section}
+---
+
+Extract and return ONLY a valid JSON object with the following keys.
+Do not include keys not listed below. Use null for unknown optional fields.
+
+{
+  "screens": [
+    {
+      "id": "snake_case_screen_id",
+      "route": "route/string",
+      "phase": 1,
+      "viewmodel": "ViewModelClassName",
+      "repository": "repository_id",
+      "use_cases": ["UseCaseName"],
+      "nav_args": ["argName:Type"],
+      "ui_states": ["LoadingState", "SuccessState"],
+      "ui_components": []
+    }
+  ],
+  "viewmodels": [
+    {
+      "id": "viewmodel_id",
+      "screen": "screen_id",
+      "repository": "repository_id",
+      "inject_dependencies": ["RepositoryClass"],
+      "ui_state_type": "data_class",
+      "event_class": "FeatureEvent",
+      "has_mutex": false,
+      "has_saved_state": false,
+      "state_fields": [
+        {"name": "isLoading", "type": "Boolean", "nullable": false, "default": "false"}
+      ],
+      "events": [
+        {"name": "NavigateToHome", "has_data": false}
+      ],
+      "functions": [
+        {
+          "name": "onSubmit",
+          "params": [],
+          "returns": "Unit",
+          "business_rule": "BR-001",
+          "concurrent": true,
+          "state_updates": ["isLoading = true"],
+          "events_fired": ["NavigateToHome"]
+        }
+      ],
+      "private_fields": [],
+      "init_lines": [],
+      "private_functions": [],
+      "computed_properties": []
+    }
+  ],
+  "repositories": [
+    {
+      "id": "repository_id",
+      "interface": "RepositoryInterface",
+      "implementation": "RepositoryImpl",
+      "data_sources": ["FirebaseAuth"],
+      "methods": [
+        {
+          "name": "signIn",
+          "params": ["email: String", "password: String"],
+          "returns": "User",
+          "result_wrapped": true,
+          "firebase_pattern": "firestore_get"
+        }
+      ]
+    }
+  ],
+  "business_rules": [
+    {
+      "id": "BR-001",
+      "description": "Rule description",
+      "trigger": "when X happens",
+      "enforcement": "ViewModel",
+      "required_updates": ["field = value"]
+    }
+  ],
+  "state_machines": [
+    {
+      "entity": "EntityName",
+      "states": ["PENDING", "ACTIVE", "COMPLETE"],
+      "transitions": [
+        {
+          "from": "PENDING",
+          "to": "ACTIVE",
+          "required_firestore_updates": ["users/{uid}.status = ACTIVE"]
+        }
+      ]
+    }
+  ],
+  "use_cases": ["GetUserUseCase", "SignInUseCase"],
+  "data_models": [
+    {
+      "id": "model_id",
+      "fields": [{"name": "uid", "type": "String", "nullable": false}],
+      "firestore_collection": "users"
+    }
+  ]
+}
+
+Rules:
+- All IDs must be snake_case
+- All class names must be PascalCase
+- firebase_pattern must be one of: auth_state_listener, phone_auth, credential_sign_in, firestore_get, firestore_update, or null
+- If a field is unknown, omit it or set it to the empty array/null default
+- Return ONLY the JSON object, no markdown fences, no explanation
