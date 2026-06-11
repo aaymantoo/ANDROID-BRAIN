@@ -25,6 +25,8 @@ Before starting the loop, collect two pieces of information:
 Confirm the brain is reachable by calling `get_session_context()`. If it fails, stop and print:
 > Brain Engine MCP server is not connected. Run `brain serve` in a terminal, then try again.
 
+> **Incremental brain?** If the brain was produced via `brain enrich-feature/phase/resume`, call `aggregate_brain()` before anything else to ensure `brain/cache/aggregated_brain.json` is current, then verify `BRAIN_PATH` points to that file before `brain serve` was started.
+
 ### Brain Integrity Audit
 
 After confirming the server is reachable, call `audit_brain()` **before entering the loop**:
@@ -58,6 +60,7 @@ Warnings ({n}):
   ...
 
 Fix the issues above, then re-run `brain build`.
+See `docs/AUDIT-BRAIN.md` for detailed remediation guidance per check type.
 ```
 
 If `audit.warnings` is non-empty but `generation_allowed == True`, log a one-line summary:
@@ -176,7 +179,7 @@ Insert this step after Step 6, before Step 7.
 
 Trigger **only when**:
 - The scaffold file for this screen contains the string `// TODO: implement screen content`
-- AND design system files exist at `{OUTPUT_DIR}/../ui/theme/Theme.kt` (or the user supplied `--design-system <dir>`)
+- AND design system files exist at `{OUTPUT_DIR}/ui/theme/Theme.kt` or `{OUTPUT_DIR}/../ui/theme/Theme.kt` (or the user supplied `--design-system <dir>`)
 
 When triggered: spawn the `ui-agent` sub-agent:
 ```
@@ -284,7 +287,9 @@ No explicit call needed. `write_result()` inside each generation tool already ca
 When `get_next_task()` returns `done=True` (or scope exhausted):
 
 ```python
-audit = audit_production_readiness(phase=1)   # repeat for each phase built
+# Iterate over every phase touched during the build session
+for phase in sorted(set(screen_graph.phase for each screen processed)):
+    audit = audit_production_readiness(phase=phase)
 ```
 
 Print a build summary:
@@ -312,6 +317,7 @@ Then list any remaining CLASS_A violations or unresolved TODOs as action items.
 3. **Logic fill pass only when** `spec_coverage < 1.0 AND used_llm == False`.
 4. **`get_next_task()` drives the loop** — no listing, scanning, or counting calls.
 5. All generation uses the MCP pipeline first (DeterministicFiller → CLIAdapter → NullAdapter). You only fill remaining TODO stubs.
+6. **Incremental enrichment tools** (`get_enrichment_status`, `get_feature_artifacts`, `aggregate_brain`) are pre-flight only — never call them inside the build loop.
 
 ---
 
@@ -344,3 +350,4 @@ After each feature:
 | Brain not found | Stop: "No PROJECT_BRAIN.json found. Run: `brain init --from-prd <prd>`" |
 | kotlinc compile error | Log warning, continue (non-blocking) |
 | get_next_task returns done=True prematurely | Verify by calling get_session_context(); if confirmed, run Final Audit |
+| Brain mutated mid-session (audit cached) | Restart `brain serve` to re-trigger the per-session audit cache; then re-enter pre-flight |
