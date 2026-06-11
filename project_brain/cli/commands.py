@@ -232,6 +232,24 @@ def roadmap(brain_path: Path | None, update: bool, feature_id: str | None) -> No
     click.echo(rg.generate(brain))
 
 
+def _is_mcp_registered() -> bool:
+    """Return True if brain-engine is registered in any Claude Code settings file."""
+    candidates = [
+        Path.home() / ".claude" / "settings.json",
+        Path(".claude") / "settings.json",
+        Path(".claude") / "settings.local.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if "brain-engine" in data.get("mcpServers", {}):
+                    return True
+            except Exception:
+                pass
+    return False
+
+
 @cli.command("build")
 @click.option("--prd", "prd_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None, help="Sparse PRD to enrich and init before building.")
 @click.option("--output", "-o", type=click.Path(path_type=Path), required=True, help="Directory to write generated Kotlin files.")
@@ -324,9 +342,13 @@ def build(
     if design_system_dir:
         scope_flags += f" --design-system {design_system_dir}"
 
+    os.environ["BRAIN_PATH"] = str(resolved_brain)
+
+    registered = _is_mcp_registered()
+
     click.echo()
     click.echo("=" * 60)
-    click.echo("Brain Engine is ready. MCP server starting now.")
+    click.echo("Brain Engine is ready.")
     click.echo()
     click.echo("In your Claude Code session, type:")
     click.echo()
@@ -337,11 +359,27 @@ def build(
     click.echo("=" * 60)
     click.echo()
 
-    os.environ["BRAIN_PATH"] = str(resolved_brain)
-
-    from project_brain.server import main as server_main
-
-    server_main()
+    if registered:
+        click.echo("brain-engine MCP server is registered in Claude Code.")
+        click.echo("Reload Claude Code (or start a new session) and paste the prompt above.")
+    else:
+        click.echo("NEXT STEP: register the MCP server so Claude Code can start it.")
+        click.echo()
+        click.echo("  Option A (recommended):")
+        click.echo("    claude mcp add brain-engine -- brain serve")
+        click.echo()
+        click.echo("  Option B (manual) -- add to .claude/settings.json:")
+        click.echo("    {")
+        click.echo('      "mcpServers": {')
+        click.echo('        "brain-engine": {')
+        click.echo('          "command": "brain",')
+        click.echo('          "args": ["serve"],')
+        click.echo(f'          "env": {{ "BRAIN_PATH": "{resolved_brain.resolve()}" }}')
+        click.echo("        }")
+        click.echo("      }")
+        click.echo("    }")
+        click.echo()
+        click.echo("After registering, reload Claude Code and paste the prompt above.")
 
 
 @cli.command("sync")

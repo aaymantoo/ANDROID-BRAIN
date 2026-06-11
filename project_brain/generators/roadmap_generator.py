@@ -271,8 +271,16 @@ class RoadmapGenerator:
     def _resolve_screen_ids(
         self, brain: ProjectBrain, component: str, target_id: str
     ) -> list[str]:
-        if component in ("viewmodel", "ui_state", "scaffold", "nav_route", "tests"):
+        if component in ("viewmodel", "ui_state", "scaffold", "nav_route"):
             # target_id is the screen_id
+            if any(s.id == target_id for s in brain.screens):
+                return [target_id]
+            return []
+        if component == "tests":
+            # target_id may be "SomeScreen_test" — strip suffix to find screen
+            bare = target_id.removesuffix("_test")
+            if any(s.id == bare for s in brain.screens):
+                return [bare]
             if any(s.id == target_id for s in brain.screens):
                 return [target_id]
             return []
@@ -288,7 +296,15 @@ class RoadmapGenerator:
         if component == "di_module":
             # target_id is the feature name/id — mark all screens in that feature
             feature = next((f for f in brain.features if f.id == target_id or f.name.lower() == target_id.lower()), None)
-            return feature.screens if feature else []
+            if feature:
+                return feature.screens
+            # Fallback: no features defined — mark all screens in a phase matching
+            # the feature name, or all screens if name is a common alias (e.g. "auth")
+            matching = [
+                s.id for s in brain.screens
+                if target_id.lower() in s.id.lower() or target_id.lower() in (s.route or "").lower()
+            ]
+            return matching if matching else [s.id for s in brain.screens]
         return []
 
     def _get_or_create_status(self, brain: ProjectBrain, screen_id: str) -> GenerationStatus:
