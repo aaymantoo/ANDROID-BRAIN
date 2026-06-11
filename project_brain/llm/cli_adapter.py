@@ -27,7 +27,7 @@ from project_brain.llm.adapter import FillFunctionsSpec
 _PROMPT_PATH_V1 = Path(__file__).parent.parent.parent / "prompts" / "function_fill_v1.txt"
 _PROMPT_PATH_V2 = Path(__file__).parent.parent.parent / "prompts" / "function_fill_v2.txt"
 _PROMPT_PATH_REPO = Path(__file__).parent.parent.parent / "prompts" / "function_fill_repository_v2.txt"
-_CLI_TIMEOUT = 180  # seconds — CLI calls are slower than direct API
+_CLI_TIMEOUT = 600  # seconds — CLI calls are slower than direct API
 _DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.75  # skip LLM when deterministic confidence >= this
 
 
